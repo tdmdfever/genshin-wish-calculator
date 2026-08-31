@@ -1154,3 +1154,73 @@ describe('a side-tracked 4★\'s own series position must not require its blocki
     }
   }, 30_000);
 });
+
+describe("a 4★ anchored to BOTH ends of a linked-but-non-adjacent character window must block the EARLY phase, not defer entirely to the LATE one — twenty-first reported bug (2026-08-30)", () => {
+  // Found by the user live in the app: [Odette, Alyosha(4★, anchored to BOTH
+  // Odette and Miko), WeaponDetour, Miko] with Odette↔Miko LINKED as
+  // simultaneous (same real patch) but NOT adjacent in priority order (the
+  // weapon detour sits between Alyosha and Miko). resolveFourStarBlockingPhase
+  // used to compute Alyosha's blocking phase as MAX(natal, latestAnchor)
+  // unconditionally — since her natal phase (Odette's, where she's textually
+  // glued) is EARLIER than her latest anchor (Miko's), the old rule picked
+  // Miko's phase, meaning Odette's own phase graduated the INSTANT Odette
+  // dropped, with zero extra pulls ever spent chasing Alyosha before the
+  // engine moved straight to the weapon banner — even though Alyosha (a
+  // higher priority than the weapon) was still open and available the whole
+  // time. A real player prioritizing Alyosha over the weapon would keep
+  // pulling the character banner until she's done, exactly the way
+  // FOCUS_RULES.md's "no exceptions" priority-order model says they should.
+  //
+  // Fixed two ways, both needed: (1) resolveFourStarBlockingPhase now blocks
+  // on the natal phase whenever it's itself one of the goal's own anchors,
+  // rather than always deferring to the latest one; (2) since that means
+  // Odette's phase can now legitimately run PAST Odette's own claim, a
+  // featured win landing during that extra stretch must roll over onto
+  // Miko's still-open slot instead of vanishing — see phaseDp.ts's
+  // always-3-part exit/entry encoding and exactEngine.ts's
+  // characterWindowPartnerByPhase/carryPhaseLocalState wiring (mirrored in
+  // simulate.ts's characterWindowPartnerByPhase for the same reason).
+  it('series[1] (Odette+Alyosha) resolves almost as fast as Odette alone, and far faster than the full chain needing the weapon and Miko too — matches Monte Carlo', () => {
+    const odette: Goal = { id: 'o', name: 'Odette', kind: '5star_character', banner: 'character', targetId: 'char5', linkedCharacterGoalId: 'm' };
+    const alyosha: Goal = {
+      id: 'a',
+      name: 'Alyosha',
+      kind: '4star_character',
+      banner: 'character',
+      targetId: 'c4a',
+      targetLevel: 0, // C0 = 1 copy
+      anchoredFiveStarGoalIds: ['o', 'm'],
+    };
+    const weaponGoal: Goal = { id: 'w', name: 'Homa', kind: '5star_weapon', banner: 'weapon', targetId: 'homa' };
+    const miko: Goal = { id: 'm', name: 'Miko', kind: '5star_character', banner: 'character', targetId: 'char5', linkedCharacterGoalId: 'o' };
+    const input = baseInput({ goals: [odette, alyosha, weaponGoal, miko], pullBudget: 300, trialCount: 400_000, seed: 21 });
+    const exact = runExactSimulation(input);
+
+    // The decisive, bug-specific check: "Odette+Alyosha" (series[1]) must
+    // track close behind Odette alone (series[0]) — a shallow C0 target with
+    // extra pulls freely available shouldn't cost much — while the FULL
+    // chain (series[3], needing the weapon AND Miko too) lags far behind,
+    // proving Alyosha resolves via her OWN early phase, not deferred to
+    // Miko's much-later one. Under the old bug, series[1] would instead have
+    // tracked close to series[3] (both effectively gated on reaching Miko's
+    // phase), with almost no extra pulls ever spent on Alyosha specifically.
+    for (const p of [100, 150, 200]) {
+      expect(exact.series[1].probabilities[p]).toBeGreaterThan(exact.series[0].probabilities[p] - 0.05);
+      expect(exact.series[1].probabilities[p]).toBeGreaterThan(exact.series[3].probabilities[p] + 0.3);
+    }
+    // Basic monotonicity sanity.
+    for (let p = 0; p <= 300; p += 10) {
+      for (let k = 1; k < 4; k++) {
+        expect(exact.series[k - 1].probabilities[p]).toBeGreaterThanOrEqual(exact.series[k].probabilities[p] - 1e-9);
+      }
+    }
+    // Cross-validated against Monte Carlo (mirrored fix in simulate.ts) —
+    // confirms the new values are actually correct, not just different.
+    const mc = runSimulation(input);
+    for (let k = 0; k < 4; k++) {
+      for (let p = 0; p <= 300; p += 25) {
+        expect(Math.abs(exact.series[k].probabilities[p] - mc.series[k].probabilities[p])).toBeLessThan(0.02);
+      }
+    }
+  }, 30_000);
+});

@@ -1,6 +1,6 @@
 import { useAppState } from '../../state/AppStateContext';
 import { validateGoals } from '../../engine/goalValidation';
-import { buildPhases, findFlankingLinkedPair } from '../../engine/phases';
+import { buildPhases, computeCharacterWindowGoalsForPhase, computeCharacterWindowPartnerPhase, findFlankingLinkedPair } from '../../engine/phases';
 import type { Goal, GoalKind } from '../../engine/types';
 
 function maxAnchorsFor(goal: Goal): number {
@@ -38,13 +38,38 @@ function isFourStar(goal: Goal): boolean {
 
 /** Groups this list's 5star_character goals by phase — see GoalForm.tsx's
  * identically-named helper (kept separate, matching this file's existing
- * pattern of duplicating small UI constants rather than cross-importing). */
+ * pattern of duplicating small UI constants rather than cross-importing).
+ *
+ * Twenty-first reported bug (2026-08-30): a linked-simultaneous pair that
+ * ISN'T literally adjacent (an interleaved weapon detour, or another 4-star,
+ * splits them into two separate `Phase` objects — see phases.ts's own
+ * buildPhases doc comment) used to show as two SEPARATE checkbox options
+ * ("Odette" and "Miko") instead of one combined "Odette + Miko" the way a
+ * literally-adjacent linked pair already does — even though the engine now
+ * treats them as one real, shared window (computeCharacterWindowPartnerPhase)
+ * and `applySymmetricLink` already auto-reconciles a 4-star's own anchors to
+ * include both the instant they're linked. The checkboxes just weren't
+ * reflecting that combined reality. Each phase index is only ever folded
+ * into one group (via `seen`), so a window pair contributes a single
+ * combined option, not two overlapping ones.
+ */
 function computeCharacterAnchorGroups(goals: Goal[]): { ids: string[]; label: string }[] {
-  return buildPhases(goals)
-    .filter((p) => p.banner === 'character')
-    .map((p) => p.goals.filter((g) => g.kind === '5star_character'))
-    .filter((fiveStars) => fiveStars.length > 0)
-    .map((fiveStars) => ({ ids: fiveStars.map((g) => g.id), label: fiveStars.map((g) => g.name).join(' + ') }));
+  const phases = buildPhases(goals);
+  const groups: { ids: string[]; label: string }[] = [];
+  const seen = new Set<number>();
+  phases.forEach((phase, p) => {
+    if (phase.banner !== 'character' || seen.has(p)) return;
+    seen.add(p);
+    const partner = computeCharacterWindowPartnerPhase(phases, p);
+    const fiveStars =
+      partner !== undefined
+        ? computeCharacterWindowGoalsForPhase(phases, p).filter((g) => g.kind === '5star_character')
+        : phase.goals.filter((g) => g.kind === '5star_character');
+    if (partner !== undefined) seen.add(partner);
+    if (fiveStars.length === 0) return;
+    groups.push({ ids: fiveStars.map((g) => g.id), label: fiveStars.map((g) => g.name).join(' + ') });
+  });
+  return groups;
 }
 
 /** The nearest OTHER 5star_character goal in one direction from `idx`, walking

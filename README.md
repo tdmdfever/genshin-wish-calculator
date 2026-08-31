@@ -21,7 +21,9 @@ npm run test     # run the test suite
 npm run build    # type-check and build for production
 ```
 
-See [CLAUDE.md](./CLAUDE.md) for architecture notes.
+**New here? Read [HOW_IT_WORKS.md](./HOW_IT_WORKS.md)** — a from-scratch rundown of everything, starting with what a "wish" even is and building all the way up to the exact math (DP recurrences, state encoding, convolution) behind the numbers on screen. No prior familiarity with the game or the code assumed.
+
+For contributors: [ARCHITECTURE.md](./ARCHITECTURE.md) is the shorter, structural-only current-state reference; [CLAUDE.md](./CLAUDE.md) is orientation; [CHANGELOG.md](./CHANGELOG.md) is the full dated development history.
 
 ## Accuracy notes
 

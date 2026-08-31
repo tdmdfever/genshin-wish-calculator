@@ -294,6 +294,50 @@ export function buildPhaseIndexByGoalId(phases: Phase[]): Map<string, number> {
  * very end), so there's no more separate "fallback" phase to redirect to —
  * `ownPhase` (from `phaseIndexByGoalId`, itself just a byproduct of
  * `buildPhases`'s own grouping) is always the right, final answer.
+ *
+ * **Twenty-first reported bug (2026-08-30): "always the LATEST anchor"
+ * silently assumed a 4-star's own natal phase is never itself a real anchor
+ * window worth waiting for — wrong whenever it is one.** Shape:
+ * `[Odette, Alyosha(anchored=[Odette,Miko]), WeaponDetour, Miko]`, Odette↔Miko
+ * LINKED (simultaneous) but not adjacent (the weapon sits between them), so
+ * `buildPhases` can't merge them into one Phase object the way it does for a
+ * literally-adjacent linked pair. Alyosha's own natal phase is Odette's
+ * (textually glued there); her anchors resolve to phases 0 (Odette) and 2
+ * (Miko); the OLD rule picked MAX = 2 unconditionally, meaning Odette's own
+ * phase graduated the instant Odette dropped — even though Alyosha (a HIGHER
+ * priority than the weapon goal sitting right after her) hadn't been
+ * touched yet, and her own window was WIDE OPEN there the whole time. A real
+ * player prioritizing Alyosha over the weapon would keep pulling the
+ * character banner (still earning Odette+Miko's shared pity/CR/roster) until
+ * she's done, not abandon a currently-available higher-priority target for a
+ * lower one — see FOCUS_RULES.md's own "no exceptions" framing of priority
+ * order, which the MAX-only rule was quietly violating for exactly this shape.
+ *
+ * Fix: when a 4-star's own natal phase is ITSELF one of her named anchors
+ * (not just contained in the [min,max] range some OTHER unrelated way — see
+ * computeClosedFourStarGoalIdsForPhase's own range check for the different,
+ * ACCRUAL-window question), block there instead of jumping to the latest
+ * anchor. This differs from the old MAX-based answer in exactly one shape:
+ * a 4-star anchored to MULTIPLE 5-stars where her own natal phase happens to
+ * be the EARLIEST of them (not the latest, and not absent from her own
+ * anchors) — every previously-fixed bug shape (ninth, twentieth, D1-D3) has
+ * either a single anchor, or a natal phase that already coincides with the
+ * latest anchor (D2), or a natal phase that isn't an anchor at all (the
+ * twentieth bug) — all of those keep their existing, already-tested answer
+ * unchanged (confirmed goal-by-goal against every named scenario in
+ * exactEngine.test.ts / trace.survey.test.ts). A same-phase, LITERALLY
+ * adjacent linked pair (e.g. `[Odette, Alyosha, Miko]` with no detour) is
+ * also unaffected, since `buildPhases` already merges them into ONE Phase
+ * object there — natal and every anchor phase are trivially identical.
+ *
+ * Blocking her own natal phase alone isn't sufficient by itself, though: once
+ * that phase is (correctly) held open past Odette's own claim, an EXTRA
+ * featured win landing during that wait (Odette's slot already full) must be
+ * able to roll over onto Miko's still-open slot instead of vanishing as
+ * "no effect" — see exactEngine.ts's `characterWindowPartnerByPhase`/
+ * `carryPhaseLocalState` wiring (built on `computeCharacterWindowGoalsForPhase`
+ * below) and simulate.ts's mirrored `isInSharedCharacterWindow` check, both of
+ * which this fix depends on to be complete.
  */
 function resolveFourStarBlockingPhase(goal: Goal, phaseIndexByGoalId: Map<string, number>): number | undefined {
   const anchors = goal.anchoredFiveStarGoalIds;
@@ -301,8 +345,9 @@ function resolveFourStarBlockingPhase(goal: Goal, phaseIndexByGoalId: Map<string
   if (!anchors || anchors.length === 0) return ownPhase;
   const anchorPhases = anchors.map((a) => phaseIndexByGoalId.get(a)).filter((x): x is number => x !== undefined);
   if (anchorPhases.length === 0) return ownPhase; // dangling anchor(s) — goalValidation.ts should have flagged this
-  const latestAnchorPhase = Math.max(...anchorPhases);
-  return ownPhase === undefined ? latestAnchorPhase : Math.max(ownPhase, latestAnchorPhase);
+  if (ownPhase === undefined) return Math.max(...anchorPhases);
+  if (anchorPhases.includes(ownPhase)) return ownPhase;
+  return Math.max(ownPhase, ...anchorPhases);
 }
 
 /**
@@ -426,6 +471,76 @@ export function computeClosedFourStarGoalIdsForPhase(phases: Phase[], p: number,
     if (p > maxAnchorPhase && phaseIndexByGoalId.get(goal.id) !== p) closed.add(goal.id);
   }
   return closed;
+}
+
+/**
+ * Twenty-first reported bug (2026-08-30). For character-banner phase `p`, the
+ * OTHER phase index it shares a real, simultaneous 5star_character FIFO
+ * window with — i.e. phase `p` has exactly one own `5star_character` goal,
+ * and it's explicitly linked (`Goal.linkedCharacterGoalId`, mutual) to a goal
+ * living in a DIFFERENT phase (found by searching the whole `phases` array,
+ * same pattern as `computeWeaponWindowGoalsForPhase` below). Returns
+ * `undefined` for the overwhelming majority of phases: 0 or 2+ own
+ * `5star_character` goals (2+ only happens when `buildPhases` already merged
+ * a literally-adjacent linked pair into one Phase object, leaving nothing to
+ * bridge), or a lone `5star_character` goal that isn't linked to anything
+ * outside this phase.
+ *
+ * This solves a genuinely different problem than weapon-window linking: a
+ * weapon pull's identity is directly observable (which physical weapon you
+ * got), so `updateGoalTracking` never needs a FIFO to know which named goal a
+ * weapon win satisfies — see `computeClosedFiveStarWeaponTargetIdsForPhase`'s
+ * own doc comment. A featured CHARACTER win, by contrast, is identity-
+ * AGNOSTIC (the banner config tracks only one currently-featured id), so
+ * which of two linked 5-stars a win claims is resolved entirely by a
+ * phase-local FIFO rank — and that FIFO normally resets every phase (see
+ * goalTracking.ts's `PhaseLocalSpec` doc comment) because a later phase's
+ * 5star_character goal is normally a genuinely separate, later win. A linked
+ * pair is the one exception: the two goals ARE the same real-time window,
+ * just split apart in priority order by an interleaved different-banner
+ * detour (or another unlinked 5-star) — so a featured win landing during the
+ * FIRST phase's own extra pulls (now correctly held open past its own claim
+ * whenever a same-window 4-star is still short of target — see
+ * `resolveFourStarBlockingPhase`'s own twenty-first-bug fix above) must be
+ * able to roll over onto the SECOND phase's still-open slot instead of being
+ * silently dropped as "no effect."
+ */
+export function computeCharacterWindowPartnerPhase(phases: Phase[], p: number): number | undefined {
+  const own = phases[p].goals.filter((g) => g.kind === '5star_character');
+  if (own.length !== 1) return undefined;
+  const link = own[0].linkedCharacterGoalId;
+  if (!link) return undefined;
+  for (let q = 0; q < phases.length; q++) {
+    if (q === p) continue;
+    if (phases[q].goals.some((g) => g.id === link)) return q;
+  }
+  return undefined;
+}
+
+/**
+ * The full, priority-ordered set of goals sharing phase `p`'s real
+ * 5star_character window — phase `p`'s own goals plus its cross-phase
+ * partner's, if `computeCharacterWindowPartnerPhase` finds one; otherwise
+ * just `phases[p].goals` unchanged (the identity-preserving fast path
+ * `exactEngine.ts` relies on to skip its own extra bookkeeping for the
+ * common, non-window case).
+ *
+ * Sorted by each goal's position in the ORIGINAL goal list (via
+ * `phases.flatMap`, which reconstructs it losslessly — the same technique
+ * `computeClosedFourStarGoalIdsForPhase` above uses), not by which phase
+ * happens to contain it: FIFO rank order is priority order, and phase `p`'s
+ * own native goals are not always the earlier half of the pair (whichever of
+ * the two phases is being asked, this function must return the SAME combined
+ * list, in the SAME order, so both phases build an identical, compatible
+ * `PhaseLocalSpec` shape — see exactEngine.ts's own doc comment on
+ * `effectivePhaseGoals` for why that compatibility is what makes carrying
+ * the FIFO code across the detour meaningful at all).
+ */
+export function computeCharacterWindowGoalsForPhase(phases: Phase[], p: number): Goal[] {
+  const partner = computeCharacterWindowPartnerPhase(phases, p);
+  if (partner === undefined) return phases[p].goals;
+  const ids = new Set([...phases[p].goals, ...phases[partner].goals].map((g) => g.id));
+  return phases.flatMap((ph) => ph.goals).filter((g) => ids.has(g.id));
 }
 
 /**

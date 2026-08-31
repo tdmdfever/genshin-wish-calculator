@@ -89,6 +89,36 @@ is always scoped to exactly the one phase it's positioned in — never opportuni
 across phases, never anchored, never "unrestricted." See "Why 5★ weapons don't get an
 anchor field" below for why this is simpler than the 4★ case, not an oversight.
 
+**Rule E — a LINKED pair split apart by a detour still tells the same one-phase story
+as Rule A/B, not two independent windows** (twenty-first reported bug, 2026-08-30). If
+`Odette` and `Miko` are explicitly linked (simultaneous) but a weapon-banner detour (or
+any other different-banner goal) sits between them in priority order, `buildPhases`
+still puts them in two separate `Phase` objects (it only merges *literally* adjacent
+linked pairs — see "Step 1" above) — but a 4★ anchored to both is NOT treated as having
+two disconnected accrual chances the way an unrelated, unlinked pair would. Concretely,
+for `[Odette, Alyosha(anchored to BOTH), WeaponDetour, Miko]`:
+- Odette's own phase does **not** end the instant Odette is claimed if Alyosha hasn't
+  reached her target — exactly like Rule A/B's single-phase story, even though Miko
+  (her other anchor) lives in a completely separate, later `Phase` object. A rational
+  player prioritizing Alyosha over the weapon detour keeps pulling the character banner
+  rather than abandoning a still-available higher-priority target.
+- If an extra featured win lands during that hold-up (Odette's own rank already
+  claimed), it rolls over onto Miko's rank instead of being wasted — the same "the next
+  win claims the next open rank" logic Rule B already describes, just spanning the
+  detour. This can ONLY happen before the weapon detour actually starts (no character
+  pulls happen once focus has moved to the weapon banner) — so Miko can, in principle,
+  already be done by the time the weapon phase begins.
+- Once Alyosha's own target IS met, focus moves to the weapon detour as normal, then to
+  Miko's own phase afterward (a no-op if she's already claimed).
+
+Contrast this with an anchor to Odette *only* (dropping Miko as an anchor): Alyosha still
+blocks Odette's own phase the same way, but her window closes once focus moves to the
+weapon detour — she gets no further chances during Miko's later rerun. Anchoring to both
+costs nothing extra and can only help, matching the Quick-reference table's existing "add
+a second anchor" row below. See `exactEngine.test.ts`'s twenty-first-reported-bug section
+for the cross-validated numbers, and `trace.survey.test.ts`'s `D5` for a concrete,
+narrated trace of exactly this shape.
+
 ## Worked example — the case you asked about
 
 Goal list: `Odette(5★) → Alyosha(4★) → Miko(5★)`, all one phase (character banner,

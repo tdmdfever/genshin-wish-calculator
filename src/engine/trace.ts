@@ -227,7 +227,7 @@ function computeFocusDisplayName(
   if (claimedRanks >= fiveStarIdsInPhase.length) return { primaryName: naiveFocusGoal.name }; // every 5-star in this phase already claimed
 
   const nextGoalId = fiveStarIdsInPhase[claimedRanks];
-  const blockingGoal = isFiveStarClaimBlocked(goals, info.phaseIndexByGoalId, info.goalIndexById, bitmask, copyCounts, currentPhaseIndex, nextGoalId);
+  const blockingGoal = isFiveStarClaimBlocked(goals, info.phaseIndexByGoalId, info.goalIndexById, bitmask, copyCounts, currentPhaseIndex, nextGoalId, info.characterWindowPartnerByPhase);
   const primaryName = blockingGoal ? blockingGoal.name : goals[info.goalIndexById.get(nextGoalId)!].name;
   if (primaryName === naiveFocusGoal.name) return { primaryName };
   // "also accruing" means the naive goal is a REAL, currently-open passenger on

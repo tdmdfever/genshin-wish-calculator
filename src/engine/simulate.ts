@@ -6,6 +6,8 @@ import {
   buildPhases,
   computeBlockingFourStarGoalIdsForPhase,
   computeCharacterBannerConfigForPhase,
+  computeCharacterWindowGoalsForPhase,
+  computeCharacterWindowPartnerPhase,
   computeClosedFiveStarWeaponTargetIdsForPhase,
   computeClosedFourStarGoalIdsForPhase,
   computeFourStarBlockingPhaseByGoalId,
@@ -95,6 +97,14 @@ export function countClaimedRanks(fiveStarCharGoalIdsInPhase: string[], goalInde
  * actual player" — the old generic wording was accurate but unhelpful; existing
  * boolean callers (`isFourStarWindowOpen`) just treat the return value as
  * truthy/falsy, unaffected by this change.
+ *
+ * `characterWindowPartnerByPhase` (twenty-first reported bug, 2026-08-30):
+ * widens the "is this 4-star native to the SAME phase" check to also accept
+ * `phaseIndex`'s own linked-simultaneous window partner (see phases.ts's
+ * computeCharacterWindowPartnerPhase) — a 4-star anchored to a shared
+ * character window can legitimately be textually native to EITHER phase of
+ * the pair, and must be able to block a claim happening on either side of an
+ * interleaved detour, not just the literal phase index passed in.
  */
 export function isFiveStarClaimBlocked(
   goals: Goal[],
@@ -104,10 +114,12 @@ export function isFiveStarClaimBlocked(
   copyCounts: Int32Array,
   phaseIndex: number,
   nextGoalId: string,
+  characterWindowPartnerByPhase: (number | undefined)[],
 ): Goal | undefined {
   return goals.find((g2, i2) => {
     if (g2.kind !== '4star_character') return false;
-    if (phaseIndexByGoalId.get(g2.id) !== phaseIndex) return false;
+    const g2Phase = phaseIndexByGoalId.get(g2.id);
+    if (g2Phase !== phaseIndex && characterWindowPartnerByPhase[phaseIndex] !== g2Phase) return false;
     const anchors = g2.anchoredFiveStarGoalIds;
     if (!anchors || anchors.length === 0) return false;
     if (anchors.includes(nextGoalId)) return false;
@@ -137,6 +149,7 @@ function isFourStarWindowOpen(
   fiveStarCharGoalIdsByPhase: string[][],
   bitmask: number,
   copyCounts: Int32Array,
+  characterWindowPartnerByPhase: (number | undefined)[],
 ): boolean {
   const anchors = goal.anchoredFiveStarGoalIds;
   if (!anchors || anchors.length === 0) return true;
@@ -152,7 +165,7 @@ function isFourStarWindowOpen(
     focusRank = claimedRanks;
   } else {
     const nextGoalId = phaseFiveStarCharGoalIds[claimedRanks];
-    const blocked = isFiveStarClaimBlocked(goals, phaseIndexByGoalId, goalIndexById, bitmask, copyCounts, phaseIndex, nextGoalId);
+    const blocked = isFiveStarClaimBlocked(goals, phaseIndexByGoalId, goalIndexById, bitmask, copyCounts, phaseIndex, nextGoalId, characterWindowPartnerByPhase);
     focusRank = blocked ? claimedRanks : claimedRanks + 1;
   }
   return anchorRanksInPhase.includes(focusRank);
@@ -183,6 +196,7 @@ function applyOutcome(
   currentPhaseIndex: number,
   banner: BannerKind,
   outcome: PullOutcome,
+  characterWindowPartnerByPhase: (number | undefined)[],
   notes?: TraceNote[],
 ): number {
   let next = bitmask;
@@ -215,9 +229,18 @@ function applyOutcome(
       // is naturally immune (each phase's own DP only ever knows about its own
       // phase's 5star_character goals), so this bug was confined to `simulate.ts`
       // (and therefore trace.ts, which reuses it) and never affected the live app.
-      if (goalPhase !== currentPhaseIndex) continue;
+      //
+      // Twenty-first reported bug (2026-08-30): this restriction is too
+      // strict for a goal sharing a LINKED-simultaneous character window with
+      // `currentPhaseIndex` (see phases.ts's computeCharacterWindowPartnerPhase)
+      // — that pair genuinely IS the same real-time window, just split apart
+      // by an interleaved detour, so a featured win landing while we're still
+      // extending the FIRST phase's own pulls (past its own claim, chasing a
+      // same-window 4-star) must be allowed to claim the SECOND phase's own
+      // still-open slot instead of being dropped as "not reached yet."
+      if (goalPhase !== currentPhaseIndex && characterWindowPartnerByPhase[currentPhaseIndex] !== goalPhase) continue;
       if (goalMatchesOutcome(goal, outcome)) {
-        const blockingGoal = isFiveStarClaimBlocked(goals, phaseIndexByGoalId, goalIndexById, bitmask, copyCounts, goalPhase, goal.id);
+        const blockingGoal = isFiveStarClaimBlocked(goals, phaseIndexByGoalId, goalIndexById, bitmask, copyCounts, goalPhase, goal.id, characterWindowPartnerByPhase);
         if (!blockingGoal) {
           next |= 1 << idx;
           claimedGenericFiveStar = true;
@@ -263,7 +286,7 @@ function applyOutcome(
         // own banner, not just once its own priority slot comes up.
         if (closedGoalIds.has(goal.id)) {
           notes?.push({ goalName: goal.name, kind: 'wasted-closed', detail: 'featured 4★ hit, but its anchor window is closed this phase' });
-        } else if (!isFourStarWindowOpen(goal, goals, phaseIndexByGoalId, goalIndexById, fiveStarCharGoalIdsByPhase, bitmask, copyCounts)) {
+        } else if (!isFourStarWindowOpen(goal, goals, phaseIndexByGoalId, goalIndexById, fiveStarCharGoalIdsByPhase, bitmask, copyCounts, characterWindowPartnerByPhase)) {
           notes?.push({ goalName: goal.name, kind: 'wasted-closed', detail: "featured 4★ hit, but focus hasn't reached its anchored patch yet this phase" });
         } else {
           if (copyCounts[idx] < goalMaxCopies(goal)) copyCounts[idx] += 1;
@@ -300,7 +323,20 @@ export interface TrialInfo {
   phaseIndexByGoalId: Map<string, number>;
   closedGoalIdsByPhase: ReadonlySet<string>[];
   closedFiveStarWeaponTargetIdsByPhase: ReadonlySet<string>[];
+  /**
+   * Twenty-first reported bug (2026-08-30): for a phase sharing a
+   * linked-simultaneous character window with another, non-adjacent phase
+   * (see phases.ts's computeCharacterWindowPartnerPhase), this is the
+   * COMBINED, priority-ordered 5star_character id list spanning BOTH phases
+   * — not just this phase's own native members — so the shared FIFO/anchor
+   * logic (countClaimedRanks, isFourStarWindowOpen, isFiveStarClaimBlocked)
+   * sees the true rank order regardless of which literal phase is currently
+   * being processed. Both phases of such a pair get the identical list here.
+   */
   fiveStarCharGoalIdsByPhase: string[][];
+  /** See phases.ts's computeCharacterWindowPartnerPhase — undefined for the
+   * overwhelming majority of (non-window) phases. */
+  characterWindowPartnerByPhase: (number | undefined)[];
   /**
    * Computed fresh per phase (not one static config reused everywhere) — mirrors
    * exactEngine.ts's per-phase computeCharacterBannerConfigForPhase/
@@ -385,7 +421,20 @@ export function buildTrialInfo(goals: Goal[], featured5StarId: string): TrialInf
   const closedGoalIdsByPhase = phases.map((_, p) => computeClosedFourStarGoalIdsForPhase(phases, p, goals));
   const fiveStarWeaponGoals = goals.filter((g) => g.kind === '5star_weapon');
   const closedFiveStarWeaponTargetIdsByPhase = phases.map((_, p) => computeClosedFiveStarWeaponTargetIdsForPhase(phases, p, fiveStarWeaponGoals));
-  const fiveStarCharGoalIdsByPhase = phases.map((phase) => phase.goals.filter((g) => g.kind === '5star_character').map((g) => g.id));
+  // Twenty-first reported bug (2026-08-30): widened to the combined,
+  // priority-ordered set for a phase sharing a linked-simultaneous character
+  // window with another (non-adjacent) phase — see TrialInfo's own doc
+  // comment on this field, and phases.ts's computeCharacterWindowPartnerPhase.
+  const characterWindowPartnerByPhase: (number | undefined)[] = phases.map((_, p) =>
+    phases[p].banner === 'character' ? computeCharacterWindowPartnerPhase(phases, p) : undefined,
+  );
+  const fiveStarCharGoalIdsByPhase = phases.map((phase, p) =>
+    characterWindowPartnerByPhase[p] !== undefined
+      ? computeCharacterWindowGoalsForPhase(phases, p)
+          .filter((g) => g.kind === '5star_character')
+          .map((g) => g.id)
+      : phase.goals.filter((g) => g.kind === '5star_character').map((g) => g.id),
+  );
   const characterFourStarGoals = goals.filter((g) => g.kind === '4star_character');
   const weaponFourStarGoals = goals.filter((g) => g.kind === '4star_weapon');
   const characterConfigByPhase = phases.map((_, p) => computeCharacterBannerConfigForPhase(phases, p, characterFourStarGoals, featured5StarId));
@@ -423,6 +472,7 @@ export function buildTrialInfo(goals: Goal[], featured5StarId: string): TrialInf
     closedGoalIdsByPhase,
     closedFiveStarWeaponTargetIdsByPhase,
     fiveStarCharGoalIdsByPhase,
+    characterWindowPartnerByPhase,
     characterConfigByPhase,
     weaponConfigByPhase,
     resetFatePointsOnEntry,
@@ -510,7 +560,7 @@ export function stepOnePull(
   if (banner === 'character') {
     const transitions = transitionCharacterBanner(charState, info.characterConfigByPhase[phaseIndex], crModel, input.crParams);
     const picked = sampleFromDistribution(transitions, rng());
-    const nextBitmask = applyOutcome(bitmask, copyCounts, goals, info.goalIndexById, info.phaseIndexByGoalId, info.fiveStarCharGoalIdsByPhase, closedGoalIds, closedFiveStarWeaponTargetIds, phaseIndex, banner, picked.outcome, notes);
+    const nextBitmask = applyOutcome(bitmask, copyCounts, goals, info.goalIndexById, info.phaseIndexByGoalId, info.fiveStarCharGoalIdsByPhase, closedGoalIds, closedFiveStarWeaponTargetIds, phaseIndex, banner, picked.outcome, info.characterWindowPartnerByPhase, notes);
     return { charState: picked.nextState, weaponState, weaponStateUsed: weaponState, bitmask: nextBitmask, banner, outcome: picked.outcome, maxPhaseIndexSeen: nextMaxPhaseIndexSeen };
   }
   const effectiveWeaponState = enteringNewPhase && info.resetFatePointsOnEntry[phaseIndex] ? { ...weaponState, fatePoints: 0 as const } : weaponState;
@@ -524,7 +574,7 @@ export function stepOnePull(
       : info.weaponConfigByPhase[phaseIndex];
   const transitions = transitionWeaponBanner(effectiveWeaponState, effectiveWeaponConfig);
   const picked = sampleFromDistribution(transitions, rng());
-  const nextBitmask = applyOutcome(bitmask, copyCounts, goals, info.goalIndexById, info.phaseIndexByGoalId, info.fiveStarCharGoalIdsByPhase, closedGoalIds, closedFiveStarWeaponTargetIds, phaseIndex, banner, picked.outcome, notes);
+  const nextBitmask = applyOutcome(bitmask, copyCounts, goals, info.goalIndexById, info.phaseIndexByGoalId, info.fiveStarCharGoalIdsByPhase, closedGoalIds, closedFiveStarWeaponTargetIds, phaseIndex, banner, picked.outcome, info.characterWindowPartnerByPhase, notes);
   return {
     charState,
     weaponState: picked.nextState,

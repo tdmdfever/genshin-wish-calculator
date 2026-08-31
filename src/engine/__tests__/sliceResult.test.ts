@@ -130,6 +130,6 @@ describe('sliceSimulationResult', () => {
       expect(worstSliceDiscrepancy(input, 90)).toBeLessThan(0.002);
       // And confirm it decays as the requested budget approaches the cached one.
       expect(worstSliceDiscrepancy(input, 600)).toBeLessThan(0.0001);
-    }, 60_000);
+    }, 120_000); // pullBudget=900 with a deep C6 target is this file's own heaviest case — bumped from 60s (2026-08-30) after confirming via a stash-based A/B run that this specific test times out under parallel-file load even on an unmodified baseline, not just when other engine changes are in flight.
   });
 });

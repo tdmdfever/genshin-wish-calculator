@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAppState } from '../../state/AppStateContext';
-import { buildPhases } from '../../engine/phases';
+import { buildPhases, computeCharacterWindowGoalsForPhase, computeCharacterWindowPartnerPhase } from '../../engine/phases';
 import { MAX_TOTAL_FOUR_STAR_GOALS_PER_BANNER } from '../../engine/goalValidation';
 import type { BannerKind, Goal, GoalKind } from '../../engine/types';
 
@@ -18,13 +18,32 @@ const WEAPON_LEVEL_OPTIONS = Array.from({ length: 5 }, (_, i) => i + 1); // R1-R
  * goals by phase (a "same simultaneous phase" group has 1 or 2 members —
  * Goal.linkedCharacterGoalId — see its doc comment) and returns one option
  * per phase, so a user can anchor to an entire phase in one click instead of
- * picking individual 5-stars and risking a partial (invalid) selection. */
+ * picking individual 5-stars and risking a partial (invalid) selection.
+ *
+ * Twenty-first reported bug (2026-08-30) — see GoalList.tsx's identical
+ * helper for the full doc comment: a linked-simultaneous pair split apart by
+ * an interleaved detour now folds into ONE combined group (via
+ * computeCharacterWindowPartnerPhase), matching what the engine — and
+ * `applySymmetricLink`'s existing anchor auto-reconciliation — already treat
+ * it as, instead of showing as two separate, misleadingly-independent options.
+ */
 function computeCharacterAnchorGroups(goals: Goal[]): { ids: string[]; label: string }[] {
-  return buildPhases(goals)
-    .filter((p) => p.banner === 'character')
-    .map((p) => p.goals.filter((g) => g.kind === '5star_character'))
-    .filter((fiveStars) => fiveStars.length > 0)
-    .map((fiveStars) => ({ ids: fiveStars.map((g) => g.id), label: fiveStars.map((g) => g.name).join(' + ') }));
+  const phases = buildPhases(goals);
+  const groups: { ids: string[]; label: string }[] = [];
+  const seen = new Set<number>();
+  phases.forEach((phase, p) => {
+    if (phase.banner !== 'character' || seen.has(p)) return;
+    seen.add(p);
+    const partner = computeCharacterWindowPartnerPhase(phases, p);
+    const fiveStars =
+      partner !== undefined
+        ? computeCharacterWindowGoalsForPhase(phases, p).filter((g) => g.kind === '5star_character')
+        : phase.goals.filter((g) => g.kind === '5star_character');
+    if (partner !== undefined) seen.add(partner);
+    if (fiveStars.length === 0) return;
+    groups.push({ ids: fiveStars.map((g) => g.id), label: fiveStars.map((g) => g.name).join(' + ') });
+  });
+  return groups;
 }
 
 export function GoalForm() {

@@ -1,10 +1,12 @@
 import { CR_MODELS } from './capturingRadiance';
-import { buildPersistentSpec } from './goalTracking';
+import { buildPersistentSpec, buildPhaseLocalSpec } from './goalTracking';
 import { runPhaseDp, type PhaseDpResult } from './phaseDp';
 import {
   buildPhases,
   computeBlockingFourStarGoalIdsForPhase,
   computeCharacterBannerConfigForPhase,
+  computeCharacterWindowGoalsForPhase,
+  computeCharacterWindowPartnerPhase,
   computeClosedFiveStarWeaponTargetIdsForPhase,
   computeClosedFourStarGoalIdsForPhase,
   computeDisconnectedFourStarGoalIds,
@@ -293,6 +295,29 @@ export function runExactSimulation(input: SimulationInput): SimulationResult {
 
   const lastPhaseResultByBanner = new Map<BannerKind, PhaseDpResult>();
   const bannerUsedBefore = new Set<BannerKind>();
+  // Twenty-first reported bug (2026-08-30): the phaseModulus each stored
+  // exitSubstateDist was actually encoded with — needed to correctly decode
+  // it back out when seeding the NEXT same-banner phase's startDist, since
+  // phaseModulus varies per phase (it's derived from that phase's own
+  // effectivePhaseGoals, see below) and phaseDp.ts's exitSubstateDist keys
+  // are always 3-part (bannerCode, persistentCode, phaseCode) now.
+  const lastPhaseModulusByBanner = new Map<BannerKind, number>();
+  // Precomputed once: for every character-banner phase, the OTHER phase
+  // index it shares a real, linked-simultaneous 5star_character FIFO window
+  // with (see phases.ts's computeCharacterWindowPartnerPhase) — undefined
+  // for the overwhelming majority of phases. Used below to (a) widen the
+  // phase-local FIFO shape both phases of such a pair are built against, so
+  // a featured win landing during the FIRST phase's own extra pulls can roll
+  // over onto the SECOND phase's still-open slot instead of vanishing, and
+  // (b) decide whether a same-banner reoccurrence should CARRY its
+  // phase-local code forward (true continuation of the same shared window)
+  // or reset it to 0 (an ordinary reoccurrence, ordinary same-banner phase).
+  const characterWindowPartnerByPhase = new Map<number, number>();
+  for (let p = 0; p < phases.length; p++) {
+    if (phases[p].banner !== 'character') continue;
+    const partner = computeCharacterWindowPartnerPhase(phases, p);
+    if (partner !== undefined) characterWindowPartnerByPhase.set(p, partner);
+  }
 
   // Phases USED TO strictly alternate banner (buildPhases merged any consecutive
   // same-banner run into one phase), which meant a banner's reoccurrence was
@@ -408,11 +433,29 @@ export function runExactSimulation(input: SimulationInput): SimulationResult {
     const phase = phases[p];
     const persistentSpec = persistentSpecByBanner[phase.banner];
     const persistentModulus = persistentModulusByBanner[phase.banner];
+
+    // Twenty-first reported bug (2026-08-30): the phase-local FIFO shape this
+    // phase's own DP run is built against. For the overwhelming majority of
+    // phases this is just `phase.goals` unchanged (fast-pathed via reference
+    // equality below); for a phase sharing a linked-simultaneous
+    // 5star_character window with another, non-adjacent phase (an
+    // interleaved different-banner detour, or another unlinked 5-star, sits
+    // between them), it's the combined, priority-ordered goal set spanning
+    // BOTH phases — see phases.ts's computeCharacterWindowGoalsForPhase for
+    // why both phases of such a pair must share this exact same shape.
+    const hasWindowPartner = characterWindowPartnerByPhase.has(p);
+    const windowPartner = characterWindowPartnerByPhase.get(p);
+    const isSecondOfWindowPair = hasWindowPartner && windowPartner! < p;
+    const effectivePhaseGoals = hasWindowPartner ? computeCharacterWindowGoalsForPhase(phases, p) : phase.goals;
+    const phaseModulusForThisPhase = buildPhaseLocalSpec(effectivePhaseGoals).dims.reduce((a, b) => a * b, 1) || 1;
+
     const startDist = new Map<number, number>();
     if (!bannerUsedBefore.has(phase.banner)) {
       const bannerCode =
         phase.banner === 'character' ? encodeCharState(input.characterBanner.state) : encodeWeaponState(input.weaponBanner.state);
-      startDist.set(bannerCode * persistentModulus + 0, 1); // persistent tracking starts at zero on first use
+      // Persistent tracking AND the phase-local FIFO counter both start at
+      // zero on the banner's first-ever use.
+      startDist.set((bannerCode * persistentModulus + 0) * phaseModulusForThisPhase + 0, 1);
     } else {
       const prev = lastPhaseResultByBanner.get(phase.banner);
       if (prev) {
@@ -425,8 +468,42 @@ export function runExactSimulation(input: SimulationInput): SimulationResult {
         // selection (see isWeaponFatePointsResetOnEntry's doc comment).
         // guaranteed5 (and everything else) carries over unchanged regardless,
         // same as the character banner's own pity/guaranteed5/CR always have.
+        // Safe to decode with the 2-part assumption `resetWeaponFatePoints`
+        // itself uses even under the now-always-3-part encoding below: this
+        // only ever runs for a weapon-banner phase, and a weapon phase's own
+        // phaseModulus is always exactly 1 (no 5star_character members are
+        // ever possible there), so the 3-part key is numerically identical
+        // to the 2-part one.
         const carried = isWeaponFatePointsResetOnEntry(phases, p) ? resetWeaponFatePoints(normalized, persistentModulus) : normalized;
-        for (const [k, v] of carried) startDist.set(k, v);
+        if (isSecondOfWindowPair) {
+          // True continuation of a linked-simultaneous character window
+          // split by a detour: `carried` was already encoded against this
+          // EXACT SAME effectivePhaseGoals (both phases of the pair share
+          // one computeCharacterWindowGoalsForPhase result), so its own
+          // phaseCode digit is directly meaningful here — preserve it
+          // instead of resetting, so a featured win claimed during the
+          // earlier phase's own extra pulls (after ITS OWN 5-star already
+          // dropped, while a shared-window 4-star was still short of
+          // target) correctly rolls over onto THIS phase's own still-open
+          // slot instead of having been silently dropped there.
+          for (const [k, v] of carried) startDist.set(k, (startDist.get(k) ?? 0) + v);
+        } else {
+          // Ordinary reoccurrence (including entering a brand-new window
+          // pair, after some earlier unrelated phase of this banner) —
+          // decode out just (bannerCode, persistentCode) using the PREVIOUS
+          // phase's own phaseModulus, then re-seed THIS phase's own
+          // phase-local FIFO at 0 — the normal, resetting behavior a later
+          // phase's 5star_character goal has always had (it's a genuinely
+          // separate, later win).
+          const prevPhaseModulus = lastPhaseModulusByBanner.get(phase.banner)!;
+          for (const [k, v] of carried) {
+            const rest = Math.floor(k / prevPhaseModulus);
+            const persistentCode = rest % persistentModulus;
+            const bannerCode = Math.floor(rest / persistentModulus);
+            const newKey = (bannerCode * persistentModulus + persistentCode) * phaseModulusForThisPhase + 0;
+            startDist.set(newKey, (startDist.get(newKey) ?? 0) + v);
+          }
+        }
       }
     }
     bannerUsedBefore.add(phase.banner);
@@ -516,7 +593,7 @@ export function runExactSimulation(input: SimulationInput): SimulationResult {
     const phaseHorizon = isDisconnectedGoalPhase ? Math.min(maxPulls, MAX_CONTINUATION_HORIZON_PULLS) : maxPulls;
     const rawResult = runPhaseDp(
       phase.banner,
-      phase.goals,
+      effectivePhaseGoals,
       persistentSpec,
       startDist,
       characterConfig,
@@ -531,6 +608,7 @@ export function runExactSimulation(input: SimulationInput): SimulationResult {
     );
     const result = isDisconnectedGoalPhase ? padPhaseDpResult(rawResult, maxPulls + 1) : rawResult;
     lastPhaseResultByBanner.set(phase.banner, result);
+    lastPhaseModulusByBanner.set(phase.banner, phaseModulusForThisPhase);
 
     // Align this phase's local-axis outputs onto the global pull axis. Uses
     // `effectiveDensity` — the main arrivalDensity, UNLESS we're still inside
@@ -549,6 +627,18 @@ export function runExactSimulation(input: SimulationInput): SimulationResult {
     for (let k = 0; k < phase.goals.length; k++) {
       const globalIdx = phase.globalStartIndex + k;
       const goal = phase.goals[k];
+      // Twenty-first reported bug (2026-08-30): `result.localPrefixDone`/
+      // `graduatedPrefixDone` are indexed by position in `effectivePhaseGoals`
+      // (what was actually passed into runPhaseDp), not necessarily by `k`
+      // (position in `phase.goals`, this phase's own NATIVE members) — the two
+      // only coincide when there's no window partner (the fast, common path:
+      // `effectivePhaseGoals === phase.goals` by reference) or when this is the
+      // FIRST phase of a window pair (whose native goals are always the
+      // earlier prefix of the combined, priority-ordered list). For the
+      // SECOND phase of a pair, its own native goal sits LATER in that
+      // combined list, so its position must be looked up by id instead of
+      // assumed to equal k — see phases.ts's computeCharacterWindowGoalsForPhase.
+      const specIdx = effectivePhaseGoals === phase.goals ? k : effectivePhaseGoals.findIndex((g) => g.id === goal.id);
       const fi = fourStarIndexById.get(goal.id);
       if (fi !== undefined && !blockingFourStarIds.has(goal.id)) {
         const goalBlockingPhase = blockingPhaseByGoalId.get(goal.id);
@@ -559,8 +649,8 @@ export function runExactSimulation(input: SimulationInput): SimulationResult {
         // mean a goal with no phase at all, which shouldn't be possible.
         if (goalBlockingPhase === undefined) continue;
         if (!activeSideTrack) {
-          const withinNatalContribution = convolve(effectiveDensity, result.localPrefixDone[k]);
-          const gDoneCumulative = convolve(effectiveDensity, result.graduatedPrefixDone[k]);
+          const withinNatalContribution = convolve(effectiveDensity, result.localPrefixDone[specIdx]);
+          const gDoneCumulative = convolve(effectiveDensity, result.graduatedPrefixDone[specIdx]);
           const blockingCumulative = convolve(effectiveDensity, result.blockingPrefixDone);
           const gPendingCumulative = new Float64Array(maxPulls + 1);
           for (let n = 0; n <= maxPulls; n++) gPendingCumulative[n] = Math.max(0, blockingCumulative[n] - gDoneCumulative[n]);
@@ -583,7 +673,7 @@ export function runExactSimulation(input: SimulationInput): SimulationResult {
         }
         continue;
       }
-      const nativeLocalPrefixDone = hasExtraBlockingFourStars ? minArray(result.localPrefixDone[k], result.blockingPrefixDone) : result.localPrefixDone[k];
+      const nativeLocalPrefixDone = hasExtraBlockingFourStars ? minArray(result.localPrefixDone[specIdx], result.blockingPrefixDone) : result.localPrefixDone[specIdx];
       globalPrefixDone[globalIdx] = convolve(effectiveDensity, nativeLocalPrefixDone);
       // This entry was computed using an active track's gDoneDensity (not the
       // main arrivalDensity) — it ALSO needs the pending stream's eventual
@@ -763,7 +853,8 @@ export function runExactSimulation(input: SimulationInput): SimulationResult {
   if (tailBanner !== undefined && persistentSpecByBanner[tailBanner].fourStarGoals.length > 0) {
     const definiteTailBanner: BannerKind = tailBanner;
     const lastRealResult = lastPhaseResultByBanner.get(definiteTailBanner);
-    if (lastRealResult) {
+    const lastRealPhaseModulus = lastPhaseModulusByBanner.get(definiteTailBanner);
+    if (lastRealResult && lastRealPhaseModulus !== undefined) {
       const tailPersistentSpec = persistentSpecByBanner[definiteTailBanner];
       const bannerAccumulator = accumulatedLevelCounts[definiteTailBanner];
       const tailFourStarTargetIds = tailPersistentSpec.fourStarGoals.map((fg) => fg.goal.targetId);
@@ -784,12 +875,30 @@ export function runExactSimulation(input: SimulationInput): SimulationResult {
         targetId: '__continuation_unreachable__',
       };
 
+      // Phase C's own phaseGoals is always [] (no 5star_character members
+      // possible, so its own phaseModulus is fixed at 1) — but
+      // `lastRealResult.exitSubstateDist` was encoded against the REAL last
+      // phase's own (possibly >1) phaseModulus. Strip that phaseCode digit
+      // back out before feeding it in (mirroring the main loop's "ordinary
+      // reoccurrence" re-encoding above) — the continuation phase has no use
+      // for a carried FIFO state (it has no 5star_character goals of its own
+      // to claim with it), only (bannerCode, persistentCode).
+      const tailPersistentModulus = persistentModulusByBanner[definiteTailBanner];
+      const strippedTailStartDist = new Map<number, number>();
+      for (const [k, v] of normalizeDist(lastRealResult.exitSubstateDist)) {
+        const rest = Math.floor(k / lastRealPhaseModulus);
+        const persistentCode = rest % tailPersistentModulus;
+        const bannerCode = Math.floor(rest / tailPersistentModulus);
+        const newKey = bannerCode * tailPersistentModulus + persistentCode;
+        strippedTailStartDist.set(newKey, (strippedTailStartDist.get(newKey) ?? 0) + v);
+      }
+
       const continuationHorizon = Math.min(maxPulls, MAX_CONTINUATION_HORIZON_PULLS);
       const phaseCResult = runPhaseDp(
         definiteTailBanner,
         [],
         tailPersistentSpec,
-        normalizeDist(lastRealResult.exitSubstateDist),
+        strippedTailStartDist,
         continuationCharConfig,
         continuationWeaponConfig,
         crModel,

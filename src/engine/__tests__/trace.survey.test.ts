@@ -347,6 +347,44 @@ const scenarios: Scenario[] = [
     overrides: { pullBudget: 600 },
   },
 
+  {
+    id: 'D5',
+    description:
+      "TWENTY-FIRST REPORTED BUG (2026-08-30): Odette + Miko LINKED (simultaneous), but NOT adjacent — a WeaponDetour sits between Alyosha (anchored to BOTH Odette and Miko) and Miko. Once Odette drops, a real player prioritizing Alyosha (who's still available on the shared Odette/Miko window) over the weapon goal keeps pulling the character banner rather than abandoning her for a lower-priority target — the engine used to jump to the weapon banner the instant Odette dropped, deferring Alyosha's own requirement entirely to Miko's phase and leaving her free to accrue nothing while the weapon phase ran uncontested. This seed (1) wins Odette on pull 2 and Alyosha only on pull 18, so there's a real 16-pull stretch to check the decision-making on",
+    seed: 1,
+    goals: [
+      fiveStarChar('o', 'Odette', 'm'),
+      fourStarChar('a', 'Alyosha', 'c4a', 0, ['o', 'm']),
+      fiveStarWeapon('h', 'Homa', 'homa'),
+      fiveStarChar('m', 'Miko', 'o'),
+    ],
+    overrides: { pullBudget: 200 },
+    extraChecks: (run) => {
+      const odetteDone = doneAt(run, 'o');
+      const alyoshaDone = doneAt(run, 'a');
+      expect(odetteDone).toBeDefined();
+      expect(alyoshaDone).toBeDefined();
+      // The whole point of this scenario: Odette resolves well before Alyosha.
+      expect(alyoshaDone!).toBeGreaterThan(odetteDone! + 5);
+
+      // Every pull strictly between Odette's own win and Alyosha's own target
+      // must stay on the CHARACTER banner — the weapon banner must not be
+      // reached until Alyosha (still available, still higher priority than
+      // the weapon) is actually done.
+      const betweenSteps = run.steps.filter((s) => s.pull > odetteDone! && s.pull <= alyoshaDone!);
+      expect(betweenSteps.length).toBeGreaterThan(0);
+      expect(betweenSteps.every((s) => s.banner === 'character')).toBe(true);
+      // And the narration itself should say so: focus names Miko (the shared
+      // window's still-open slot) while explicitly calling out Alyosha as the
+      // reason pulling continues — not "focus: weapon banner".
+      expect(betweenSteps.some((s) => s.focusGoalName === 'Miko' && s.alsoAccruingGoalName === 'Alyosha')).toBe(true);
+
+      // Weapon pulls must only start once Alyosha's own target is met.
+      const weaponSteps = run.steps.filter((s) => s.banner === 'weapon');
+      if (weaponSteps.length > 0) expect(weaponSteps[0].pull).toBeGreaterThan(alyoshaDone!);
+    },
+  },
+
   // ---- E: weapon Epitomized Path ----
   { id: 'E1', description: 'single 5star_weapon goal (baseline)', seed: 15, goals: [fiveStarWeapon('h', 'Homa', 'homa')] },
   {

@@ -24,12 +24,23 @@ import type {
 export interface PhaseDpResult {
   /**
    * Total (unnormalized) probability mass that fully completes this phase within
-   * maxPulls, broken down by (banner substate, persistent tracking vector) it ends
-   * in — key = bannerCode * persistentModulus + persistentCode, where
-   * persistentModulus = product of persistentSpec.dims. Used to seed a later phase
-   * that reuses this same banner (normalize by dividing by the sum of this map's
-   * values) — persistentSpec is identical across every phase of a banner (built
-   * once from the whole goal list), so this key is directly reusable there.
+   * maxPulls, broken down by (banner substate, persistent tracking vector,
+   * phase-local FIFO vector) it ends in — key =
+   * (bannerCode * persistentModulus + persistentCode) * phaseModulus + phaseCode,
+   * where persistentModulus = product of persistentSpec.dims and phaseModulus =
+   * product of THIS phase's own phaseSpec.dims (built from whatever `phaseGoals`
+   * this call was given — see exactEngine.ts's `effectivePhaseGoals`). Used to
+   * seed a later phase that reuses this same banner (normalize by dividing by
+   * the sum of this map's values) — persistentSpec is identical across every
+   * phase of a banner (built once from the whole goal list), so that component
+   * of the key is always directly reusable there; the phaseCode component is
+   * only meaningfully reusable when the NEXT phase was built from the exact
+   * same `phaseGoals` (a linked-simultaneous character window spanning both —
+   * see phases.ts's `computeCharacterWindowGoalsForPhase`), which is why
+   * exactEngine.ts decodes-and-resets it back to 0 for every ordinary
+   * (non-window) same-banner reoccurrence instead of passing it through
+   * unchanged — twenty-first reported bug (2026-08-30), see this file's own
+   * doc comment on the startDist-ingestion loop below for the full story.
    */
   exitSubstateDist: Map<number, number>;
   /** localPrefixDone[k][l] = P(first k+1 phase goals done by local pull l | just entered phase at l=0), k=0..phaseGoals.length-1.
@@ -228,7 +239,7 @@ function makeBannerAdapter(
  * plain index instead of calling `SliceMap.add()` (a `Map.get` per call) tens of
  * thousands of times per slice per pull. */
 type SliceOutcomeResult =
-  | { done: true; newPersistentCode: number; copiesPerFourStar: number[]; prefixStreak: number }
+  | { done: true; newPersistentCode: number; newPhaseCode: number; copiesPerFourStar: number[]; prefixStreak: number }
   | { done: false; newSliceKey: number; destArray: Float64Array };
 
 /** dense[bannerCode] = probability mass, for one (persistentCode, phaseCode)
@@ -370,11 +381,34 @@ export function runPhaseDp(
     return persistentCode * phaseModulus + phaseCode;
   }
 
+  // `startDist`/`exitSubstateDist` keys are ALWAYS 3-part-encoded, mixed-radix
+  // (bannerCode, persistentCode, phaseCode) — see phaseKeyOf/decodePhaseKey
+  // below. Twenty-first reported bug (2026-08-30): this used to be 2-part
+  // (bannerCode, persistentCode only), with the phase-local FIFO counter
+  // unconditionally reset to 0 on every phase entry — correct for the
+  // overwhelming majority of phases (a later phase's 5star_character goal
+  // really is a separate, later win), but wrong for two phases sharing one
+  // real, LINKED-simultaneous 5star_character window split apart by an
+  // interleaved different-banner detour (see phases.ts's
+  // computeCharacterWindowPartnerPhase) — there, a featured win landing
+  // during the FIRST phase's own extra pulls (past its own claim, while a
+  // same-window 4-star is still short of target) must roll over onto the
+  // SECOND phase's still-open slot instead of vanishing. Always including
+  // phaseCode costs nothing for an ordinary phase — every one of its own
+  // native 5star_character members already blocks it (exactEngine.ts's
+  // `blockingGoals` always includes a phase's own native 5-star/weapon
+  // goals unconditionally), so phaseCode is pinned to a single fixed value
+  // at the point of graduation regardless, adding no new distinct keys.
+  // Whether a given phase transition actually CARRIES the decoded phaseCode
+  // forward or resets it to 0 is entirely exactEngine.ts's call — see its
+  // own doc comment on `effectivePhaseGoals`/`isSecondOfWindowPair`.
   let active = new SliceMap(bannerModulus);
   for (const [startKey, prob] of startDist) {
-    const persistentCode = startKey % persistentModulus;
-    const bannerCode = Math.floor(startKey / persistentModulus);
-    active.add(sliceKeyOf(persistentCode, 0), bannerCode, prob); // phase-local counter always starts at 0
+    const phaseCode = startKey % phaseModulus;
+    const rest = Math.floor(startKey / phaseModulus);
+    const persistentCode = rest % persistentModulus;
+    const bannerCode = Math.floor(rest / persistentModulus);
+    active.add(sliceKeyOf(persistentCode, phaseCode), bannerCode, prob);
   }
 
   const exitSubstateDist = new Map<number, number>();
@@ -478,7 +512,7 @@ export function runPhaseDp(
       for (let bannerCode = 0; bannerCode < bannerModulus; bannerCode++) {
         const mass = arr[bannerCode];
         if (mass <= 0) continue;
-        const exitKey = bannerCode * persistentModulus + persistentCode;
+        const exitKey = (bannerCode * persistentModulus + persistentCode) * phaseModulus + phaseCode;
         exitSubstateDist.set(exitKey, (exitSubstateDist.get(exitKey) ?? 0) + mass);
       }
       recordGraduated(sumMass(arr), phaseVector, persistentVector);
@@ -520,9 +554,14 @@ export function runPhaseDp(
         );
         if (isPhaseFullyDone(phaseSpec, persistentSpec, newPhaseVector, newPersistentVector, blockingGoals)) {
           const newPersistentCode = encodeVector(persistentSpec.dims, newPersistentVector);
+          // Always encoded (not just when a window-carry is in play, see this
+          // function's doc comment on the 3-part key format) — a plain,
+          // never-carried phase pins this to the phase's own single "every
+          // native 5-star claimed" value, adding no new distinct exit keys.
+          const newPhaseCode = encodeVector(phaseSpec.dims, newPhaseVector);
           const copiesPerFourStar = persistentSpec.fourStarGoals.map((fg) => copyCountOf(persistentSpec, newPersistentVector, fg.goal.targetId));
           const prefixStreak = computePrefixStreak(newPhaseVector, newPersistentVector);
-          perOutcome[oi] = { done: true, newPersistentCode, copiesPerFourStar, prefixStreak };
+          perOutcome[oi] = { done: true, newPersistentCode, newPhaseCode, copiesPerFourStar, prefixStreak };
         } else {
           const newPersistentCode = encodeVector(persistentSpec.dims, newPersistentVector);
           const newPhaseCode = encodeVector(phaseSpec.dims, newPhaseVector);
@@ -547,7 +586,7 @@ export function runPhaseDp(
           if (branchProb <= 0) continue;
           const pre = perOutcome[t.outcomeIndex];
           if (pre.done) {
-            const exitKey = t.nextBannerCode * persistentModulus + pre.newPersistentCode;
+            const exitKey = (t.nextBannerCode * persistentModulus + pre.newPersistentCode) * phaseModulus + pre.newPhaseCode;
             exitSubstateDist.set(exitKey, (exitSubstateDist.get(exitKey) ?? 0) + branchProb);
             graduatedTotal += branchProb;
             for (let fi = 0; fi < numFourStar; fi++) graduatedLevelMass[fi][pre.copiesPerFourStar[fi]] += branchProb;
