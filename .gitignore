@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Local debug/trace scratch output
+.trace-scratch
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
