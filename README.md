@@ -2,6 +2,8 @@
 
 A client-side calculator for Genshin Impact's Character and Weapon Event Wish banners. Enter your current pity/guarantee state, add a priority-ordered list of goals (5★/4★ characters and weapons, with optional constellation/refinement targets), and see your exact odds of completing each prefix of that list over your next pulls — plus a full constellation/refinement breakdown for every 4★ goal.
 
+**[Try it live](https://tdmdfever.github.io/genshin-wish-calculator/)** · [How the engine works (illustrated explainer)](https://tdmdfever.github.io/genshin-wish-calculator/wish-engine-internals.html)
+
 Odds are computed exactly via dynamic programming, not estimated by simulation — there's no trial count or sampling noise.
 
 ## Features
