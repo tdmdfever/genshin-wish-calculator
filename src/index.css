@@ -1,51 +1,65 @@
-:root {
-  --page-bg: #f9f9f7;
-  --surface: #fcfcfb;
-  --text-primary: #0b0b0b;
-  --text-secondary: #52514e;
-  --text-muted: #898781;
-  --border: #e1e0d9;
-  --accent: #2a78d6;
-  --error: #d03b3b;
-
-  color-scheme: light dark;
-  font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
-  color: var(--text-primary);
-  background: var(--page-bg);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --page-bg: #0d0d0d;
-    --surface: #1a1a19;
-    --text-primary: #ffffff;
-    --text-secondary: #c3c2b7;
-    --text-muted: #898781;
-    --border: #2c2c2a;
-    --accent: #3987e5;
-    --error: #e66767;
-  }
-}
-
-* {
+/* Base styles, built on the tokens in styles/tokens.css (the style guide). Colours,
+   fonts, spacing and radii are defined there; edit values there. */
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
+html,
 body {
   margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+
+:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--color-accent-strong);
+  text-decoration: underline;
 }
 
 h1,
 h2,
 h3 {
+  font-family: var(--font-serif);
   font-weight: 600;
+  line-height: 1.25;
   margin: 0;
+}
+
+h1 {
+  font-size: clamp(1.7rem, 4vw, 2.3rem);
 }
 
 p {
   margin: 0;
 }
 
+/* Buttons: sans, sentence case, softly rounded. Primary = solid accent; secondary =
+   a raised key that turns accent on hover. (Same split as the personal site.) */
 button {
   font: inherit;
 }
@@ -53,9 +67,47 @@ button {
 input,
 select {
   font: inherit;
-  color: inherit;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  color: var(--color-text);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
   padding: 6px 8px;
+}
+
+input:focus-visible,
+select:focus-visible {
+  outline-offset: 1px;
+}
+
+/* Star tone: anything inside an element with data-tone="5star" (gold) or data-tone="4star"
+   (lavender) reads --tone. The default, outside any tone, is gold. Checkboxes and focus rings
+   follow it; the Add-goal button does too (App.css). */
+:root {
+  --tone: var(--color-5star);
+  --tone-strong: var(--color-5star-strong);
+}
+
+[data-tone='5star'] {
+  --tone: var(--color-5star);
+  --tone-strong: var(--color-5star-strong);
+}
+
+[data-tone='4star'] {
+  --tone: var(--color-4star);
+  --tone-strong: var(--color-4star-strong);
+}
+
+[data-tone] :focus-visible {
+  outline-color: var(--tone);
+}
+
+input[type='checkbox'] {
+  accent-color: var(--tone);
+}
+
+/* Numbers read best in the mono voice */
+input[type='text'].numeric,
+.number-field input {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }

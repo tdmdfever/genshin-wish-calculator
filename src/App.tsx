@@ -38,7 +38,12 @@ function Calculator() {
       <p className="app-disclaimer">
         Pity, 50/50, and Epitomized Path mechanics are community-verified. Capturing Radiance has never been
         officially documented by HoYoverse — both models offered here (see Settings) are community estimates, not
-        confirmed rates. Odds shown are computed exactly (no simulation sampling).
+        confirmed rates. Odds shown are computed exactly (no simulation sampling). Curious how it works? Read the{' '}
+        {/* A static page in public/, so it needs the app's base path (/ in dev, /genshin-wish-calculator/ deployed).
+            New tab: the goal list you have built is not saved, so leaving this page would lose it. */}
+        <a href={`${import.meta.env.BASE_URL}wish-engine-internals.html`} target="_blank" rel="noreferrer noopener">
+          Illustrated Explainer &rarr;
+        </a>
       </p>
 
       <section className="section">
@@ -60,9 +65,9 @@ function Calculator() {
           <p className="app-disclaimer">Fix the goal list errors above (highlighted in red) to see your odds.</p>
         ) : (
           <>
-            <ResultsChart result={result} isRunning={isRunning} activeIdx={activeIdx} onActiveIdxChange={setActiveIdx} />
+            <ResultsChart result={result} goals={state.goals} isRunning={isRunning} activeIdx={activeIdx} onActiveIdxChange={setActiveIdx} />
             {result && (
-              <BreakdownPanel breakdowns={result.breakdowns} activeIdx={activeIdx} activePull={result.pullCounts[activeIdx] ?? 0} />
+              <BreakdownPanel breakdowns={result.breakdowns} goals={state.goals} activeIdx={activeIdx} activePull={result.pullCounts[activeIdx] ?? 0} />
             )}
           </>
         )}

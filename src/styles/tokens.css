@@ -1,0 +1,89 @@
+/* ============================================================================
+   STYLE GUIDE: the calculator's design tokens (colours, fonts, spacing, radii).
+   Change the look HERE, not per component. Every stylesheet reads these variables
+   (var(--color-accent) and so on) and nothing else in src/ hard-codes a colour,
+   font or radius, so editing a value below re-themes the whole app.
+
+   This deliberately mirrors the personal site's style guide
+   (personalwebsite/src/styles/tokens.css): same token names, same values, so the
+   two read as one system and a change can be carried across by copying a line.
+
+   Design language: dark charcoal, quiet and precise.
+   - Blue-tinted charcoal ground; panels are a step lighter; 1px hairlines.
+   - Warm cream text. Gold is the accent (links, interactive states, primary
+     buttons, data highlights).
+   - Lavender means "4-star" wherever it appears: chart lines that end in a 4-star goal, the
+     constellation/refinement bars, the Add-goal button and checkboxes for 4-star goals, and
+     the "advanced (4-star pity)" controls. Gold means 5-star (see "The star colours" below).
+   - One type family, three voices (IBM Plex): Serif for headings, Sans for prose,
+     Mono for numbers, labels and buttons.
+   - Gently rounded panels; inputs and rules stay sharp.
+
+   To try a different accent, change --color-accent (and --color-accent-strong, its
+   hover). Keep --color-accent-contrast dark enough to read on it: it is the text on
+   solid gold buttons. Muted text is >= 5.5:1 on every surface and gold is >= 8:1
+   today; re-check contrast if you move colours far.
+
+   Dark only (like the site): there is no light theme.
+
+   Two places CANNOT read these variables, so update them by hand if you change the
+   ground colour:
+   - <meta name="theme-color"> in index.html (the browser bar on phones): set it to
+     the same value as --color-bg.
+   - public/wish-engine-internals.html (the Illustrated Explainer) is a separate
+     static page with its own palette and light/dark themes.
+   ========================================================================== */
+:root {
+  color-scheme: dark;
+
+  /* ---- Ground and panels ---- */
+  --color-bg: #14161b; /* the page */
+  --color-surface: #1b1d25; /* panels: forms, sections, the chart card */
+  --color-surface-2: #22252e; /* raised things inside panels: inputs, secondary buttons, code */
+  --color-border: #2b2e39; /* hairlines */
+  --color-border-strong: #3c404e; /* stronger rules, input outlines */
+
+  /* ---- Text ---- */
+  --color-text: #d9d0ba; /* cream, not white: ~11.8:1 on the ground, easy on the eyes */
+  --color-text-muted: #a19e96; /* warm gray to sit with the cream */
+
+  /* ---- Accent (links, interactive states, primary buttons, 5-star data) ---- */
+  --color-accent: #dcb75c;
+  --color-accent-strong: #ecc978; /* hover */
+  --color-accent-contrast: #14161b; /* text on solid accent buttons */
+
+  /* ---- 4-star colour: lavender ---- */
+  --color-accent-2: #b39ddb;
+  --color-accent-2-strong: #cbb8f0; /* hover */
+
+  /* ---- Feedback ---- */
+  --color-error: #e66767;
+
+  /* ---- The star colours: what gold and lavender MEAN ----
+     5-star things are gold, 4-star things are lavender, everywhere: chart lines (coloured by
+     the LAST goal in each prefix; lines of one colour are told apart by dash pattern, see
+     ResultsChart.tsx), the Add-goal button and checkboxes while a goal of that rating is
+     selected (and on goals of that rating), and the 4-star pity controls. Point these at
+     different colours to re-map the meaning. */
+  --color-5star: var(--color-accent);
+  --color-5star-strong: var(--color-accent-strong);
+  --color-4star: var(--color-accent-2);
+  --color-4star-strong: var(--color-accent-2-strong);
+
+  /* ---- Type ---- */
+  --font-serif: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ---- Spacing scale ---- */
+  --space-1: 0.5rem;
+  --space-2: 1rem;
+  --space-3: 1.5rem;
+  --space-4: 2.5rem;
+  --space-5: 4rem;
+
+  /* ---- Layout and shape ---- */
+  --max-width-page: 61.25rem; /* 980px; the site uses 64rem */
+  --radius: 7px; /* panels: forms, sections, the chart card */
+  --radius-sm: 3px; /* buttons, inputs, tags */
+}

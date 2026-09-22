@@ -1,5 +1,6 @@
 import type { SimulationInput } from '../engine/types';
 import type { AppState } from './AppStateContext';
+import { withDisplayNames } from './goalDisplay';
 
 /**
  * The featured-pool/Epitomized-Path config used to be derived HERE, once,
@@ -18,7 +19,8 @@ export function buildSimulationInput(state: AppState): SimulationInput {
     weaponBanner: { state: state.weaponBanner.state },
     crModelId: state.crModelId,
     crParams: state.crParams,
-    goals: state.goals,
+    // display names ("Xingqiu (C2)") so every label the engine builds carries the level
+    goals: withDisplayNames(state.goals),
     trialCount: state.trialCount,
     seed: state.seed,
   };

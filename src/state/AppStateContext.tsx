@@ -55,7 +55,8 @@ type Action =
       linkedCharacterGoalId?: string;
     }
   | { type: 'REMOVE_GOAL'; id: string }
-  | { type: 'MOVE_GOAL'; id: string; direction: 'up' | 'down' }
+  | { type: 'EDIT_GOAL'; id: string; name?: string; kind?: GoalKind }
+  | { type: 'REORDER_GOAL'; id: string; toIndex: number }
   | { type: 'SET_GOAL_TARGET_LEVEL'; id: string; targetLevel: number }
   | { type: 'SET_GOAL_ANCHORS'; id: string; anchoredFiveStarGoalIds: string[] }
   | { type: 'SET_GOAL_WEAPON_LINK'; id: string; linkedWeaponGoalId: string | undefined }
@@ -167,13 +168,51 @@ function reducer(state: AppState, action: Action): AppState {
       }));
       return { ...state, goals };
     }
-    case 'MOVE_GOAL': {
-      const idx = state.goals.findIndex((g) => g.id === action.id);
-      if (idx === -1) return state;
-      const swapWith = action.direction === 'up' ? idx - 1 : idx + 1;
-      if (swapWith < 0 || swapWith >= state.goals.length) return state;
+    case 'EDIT_GOAL': {
+      const old = state.goals.find((g) => g.id === action.id);
+      if (!old) return state;
+      const name = action.name?.trim() || old.name;
+      const kind = action.kind ?? old.kind;
+      if (kind === old.kind) {
+        return { ...state, goals: state.goals.map((g) => (g.id === action.id ? { ...g, name } : g)) };
+      }
+      // A kind change makes everything specific to the old kind meaningless, so it is reset the
+      // same way a fresh goal of the new kind starts (no anchors, no links, default level) —
+      // rather than carried over into a state the validator would reject. Other goals that
+      // pointed AT this one only stop pointing if it is no longer a 5★ of the kind they
+      // reference, which any kind change means (REMOVE_GOAL's cleanup, minus the deletion).
+      // An anchor list emptied by that becomes "unset" (the default candidate applies) instead
+      // of an explicit "not on any 5★".
+      const goals = state.goals.map((g) => {
+        if (g.id === action.id) {
+          return {
+            ...g,
+            name,
+            kind,
+            banner: kind === '5star_weapon' || kind === '4star_weapon' ? ('weapon' as const) : ('character' as const),
+            targetLevel: kind === '4star_character' ? 0 : kind === '4star_weapon' ? 1 : undefined,
+            anchoredFiveStarGoalIds: undefined,
+            linkedWeaponGoalId: undefined,
+            linkedCharacterGoalId: undefined,
+          };
+        }
+        const anchors = g.anchoredFiveStarGoalIds?.filter((id) => id !== action.id);
+        return {
+          ...g,
+          linkedCharacterGoalId: g.linkedCharacterGoalId === action.id ? undefined : g.linkedCharacterGoalId,
+          linkedWeaponGoalId: g.linkedWeaponGoalId === action.id ? undefined : g.linkedWeaponGoalId,
+          anchoredFiveStarGoalIds: anchors && anchors.length === 0 && g.anchoredFiveStarGoalIds!.length > 0 ? undefined : anchors,
+        };
+      });
+      return { ...state, goals };
+    }
+    case 'REORDER_GOAL': {
+      const from = state.goals.findIndex((g) => g.id === action.id);
+      const to = Math.max(0, Math.min(state.goals.length - 1, action.toIndex));
+      if (from === -1 || from === to) return state;
       const goals = [...state.goals];
-      [goals[idx], goals[swapWith]] = [goals[swapWith], goals[idx]];
+      const [moved] = goals.splice(from, 1);
+      goals.splice(to, 0, moved);
       return { ...state, goals };
     }
     case 'SET_GOAL_TARGET_LEVEL':

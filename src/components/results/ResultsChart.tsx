@@ -1,12 +1,53 @@
 import { useEffect, useRef, useState } from 'react';
-import type { SimulationResult } from '../../engine/types';
+import type { Goal, SimulationResult } from '../../engine/types';
 import './ResultsChart.css';
 
-const SERIES_VARS = ['--series-1', '--series-2', '--series-3', '--series-4', '--series-5', '--series-6', '--series-7', '--series-8'];
 const GRID_LINES = [0, 0.25, 0.5, 0.75, 1];
+
+// How each line is drawn. COLOUR says what the line ends in: a prefix of the goal list whose last
+// goal is a 5-star is gold, one whose last goal is a 4-star is lavender (--color-5star /
+// --color-4star in styles/tokens.css). DASH PATTERN tells apart lines of the same colour, and counts back from the
+// end of the list: the full plan (last line) is solid and bold, the prefix before it is dashed, then
+// dotted, then dash-dot, repeating. Same scheme as the chart on the personal site. Pattern as well as
+// colour, so nothing relies on colour alone.
+const DASH_PATTERNS = ['none', '7 4', '0.1 4.5', '10 4 1.5 4'];
+
+interface SeriesStyle {
+  color: string;
+  dash: string;
+  width: number;
+  /** The last series: the whole goal list. Drawn solid and bold, with a filled end marker. */
+  isWhole: boolean;
+}
+
+function styleSeries(result: SimulationResult, goals: Goal[]): SeriesStyle[] {
+  const lastIndex = result.series.length - 1;
+  return result.series.map((s, i) => {
+    const lastGoalId = s.goalIds[s.goalIds.length - 1];
+    const is4Star = goals.find((g) => g.id === lastGoalId)?.kind.startsWith('4star') ?? false;
+    const fromEnd = lastIndex - i;
+    return {
+      color: is4Star ? 'var(--color-4star)' : 'var(--color-5star)',
+      dash: DASH_PATTERNS[fromEnd % DASH_PATTERNS.length],
+      width: fromEnd === 0 ? 2.5 : 1.75,
+      isWhole: fromEnd === 0,
+    };
+  });
+}
+
+/** A short sample of a line, for the legend and the hover readout. */
+function SeriesKey({ style }: { style: SeriesStyle }) {
+  return (
+    <svg className="series-key" width="22" height="8" aria-hidden="true">
+      <line x1="0" x2="22" y1="4" y2="4" stroke={style.color} strokeWidth={style.width} strokeDasharray={style.dash} strokeLinecap="round" />
+    </svg>
+  );
+}
 
 interface Props {
   result: SimulationResult | null;
+  /** The goal list the result was computed for; a line's colour depends on its last goal's star rating. */
+  goals: Goal[];
   isRunning: boolean;
   /** The pull index other panels (e.g. the constellation/refinement breakdown) stay
    * synced to — lifted up so it survives this component's own re-renders and can be
@@ -16,7 +57,7 @@ interface Props {
   onActiveIdxChange: (idx: number) => void;
 }
 
-export function ResultsChart({ result, isRunning, activeIdx, onActiveIdxChange }: Props) {
+export function ResultsChart({ result, goals, isRunning, activeIdx, onActiveIdxChange }: Props) {
   const [showTable, setShowTable] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
   const lastIdx = result ? result.pullCounts.length - 1 : 0;
@@ -50,6 +91,7 @@ export function ResultsChart({ result, isRunning, activeIdx, onActiveIdxChange }
   const xScale = (pull: number) => margin.left + (pull / maxPull) * plotW;
   const yScale = (p: number) => margin.top + (1 - p) * plotH;
 
+  const styles = styleSeries(result, goals);
   const paths = result.series.map((s) => ({
     ...s,
     d: s.probabilities.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(result.pullCounts[i]).toFixed(2)} ${yScale(p).toFixed(2)}`).join(' '),
@@ -72,9 +114,7 @@ export function ResultsChart({ result, isRunning, activeIdx, onActiveIdxChange }
           <div className="legend">
             {result.series.map((s, i) => (
               <span className="legend-item" key={s.goalIds.join('-')}>
-                <svg width="16" height="8" aria-hidden="true">
-                  <line x1="0" y1="4" x2="16" y2="4" stroke={`var(${SERIES_VARS[i % 8]})`} strokeWidth={2} />
-                </svg>
+                <SeriesKey style={styles[i]} />
                 {s.label}
               </span>
             ))}
@@ -114,7 +154,12 @@ export function ResultsChart({ result, isRunning, activeIdx, onActiveIdxChange }
             </text>
 
             {paths.map((s, i) => (
-              <path key={s.goalIds.join('-')} d={s.d} className="series-line" style={{ stroke: `var(${SERIES_VARS[i % 8]})` }} />
+              <path
+                key={s.goalIds.join('-')}
+                d={s.d}
+                className="series-line"
+                style={{ stroke: styles[i].color, strokeWidth: styles[i].width, strokeDasharray: styles[i].dash }}
+              />
             ))}
 
             <line
@@ -129,9 +174,9 @@ export function ResultsChart({ result, isRunning, activeIdx, onActiveIdxChange }
                 key={s.goalIds.join('-')}
                 cx={xScale(result.pullCounts[activeIdx])}
                 cy={yScale(s.probabilities[activeIdx])}
-                r={4}
-                className="end-marker"
-                style={{ fill: `var(${SERIES_VARS[i % 8]})` }}
+                r={styles[i].isWhole ? 4.5 : 3.5}
+                className={styles[i].isWhole ? 'end-marker' : 'end-marker end-marker--hollow'}
+                style={styles[i].isWhole ? { fill: styles[i].color } : { stroke: styles[i].color }}
               />
             ))}
           </svg>
@@ -143,7 +188,7 @@ export function ResultsChart({ result, isRunning, activeIdx, onActiveIdxChange }
             </div>
             {paths.map((s, i) => (
               <div className="tooltip-row" key={s.goalIds.join('-')}>
-                <span className="tooltip-key" style={{ background: `var(${SERIES_VARS[i % 8]})` }} />
+                <SeriesKey style={styles[i]} />
                 <span className="tooltip-value">{(s.probabilities[activeIdx] * 100).toFixed(1)}%</span>
                 <span className="tooltip-label">{s.label}</span>
               </div>

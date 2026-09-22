@@ -1,7 +1,11 @@
 import { useAppState } from '../../state/AppStateContext';
-import { validateGoals } from '../../engine/goalValidation';
+import { MAX_TOTAL_FOUR_STAR_GOALS_PER_BANNER, validateGoals } from '../../engine/goalValidation';
 import { buildPhases, computeCharacterWindowGoalsForPhase, computeCharacterWindowPartnerPhase, findFlankingLinkedPair } from '../../engine/phases';
 import type { Goal, GoalKind } from '../../engine/types';
+import { goalDisplayName } from '../../state/goalDisplay';
+import { GoalIcon } from './GoalIcon';
+import { GoalNameInput } from './GoalNameInput';
+import { useDragReorder } from './useDragReorder';
 
 function maxAnchorsFor(goal: Goal): number {
   return goal.kind === '4star_character' ? 2 : 1;
@@ -89,6 +93,10 @@ function findAdjacentCharacterLinkCandidate(goals: Goal[], idx: number, directio
 
 export function GoalList() {
   const { state, dispatch } = useAppState();
+  const { dragId, rowRef, handleProps, rowStyle } = useDragReorder(
+    state.goals.map((g) => g.id),
+    (id, toIndex) => dispatch({ type: 'REORDER_GOAL', id, toIndex }),
+  );
 
   if (state.goals.length === 0) {
     return <p className="empty-hint">No goals yet — add one below. Order matters: it's your priority list.</p>;
@@ -98,6 +106,14 @@ export function GoalList() {
   const characterAnchorGroups = computeCharacterAnchorGroups(state.goals);
   const errors = validateGoals(state.goals);
   const errorsByGoalId = new Map(errors.map((e) => [e.goalId, e.message]));
+
+  // The 4★ per-banner cap is enforced by the Add form, not the validator, so a row's kind
+  // dropdown holds to it too: a kind is unavailable when the OTHER goals already fill it.
+  function kindIsFull(kind: GoalKind, goalId: string): boolean {
+    if (kind !== '4star_character' && kind !== '4star_weapon') return false;
+    const banner = kind === '4star_character' ? 'character' : 'weapon';
+    return state.goals.filter((g) => g.kind === kind && g.id !== goalId).length >= MAX_TOTAL_FOUR_STAR_GOALS_PER_BANNER[banner];
+  }
 
   function toggleCharacterAnchorGroup(goal: Goal, ids: string[]) {
     const current = effectiveAnchorsFor(goal, characterAnchorGroups, fiveStarWeaponGoals);
@@ -135,7 +151,7 @@ export function GoalList() {
   }
 
   return (
-    <ol className="goal-list">
+    <ol className={`goal-list ${dragId ? 'is-reordering' : ''}`} role="list">
       {state.goals.map((goal, idx) => {
         const error = errorsByGoalId.get(goal.id);
         // Linking only requires no OTHER 5star_character goal between the
@@ -148,42 +164,58 @@ export function GoalList() {
           findAdjacentCharacterLinkCandidate(state.goals, idx, 1),
         ].filter((g): g is Goal => !!g);
         return (
-          <li key={goal.id} className={`goal-row ${error ? 'has-error' : ''}`}>
+          <li
+            key={goal.id}
+            ref={rowRef(goal.id)}
+            className={`goal-row ${error ? 'has-error' : ''} ${dragId === goal.id ? 'is-dragging' : ''}`}
+            style={rowStyle(goal.id, idx)}
+            data-tone={goal.kind.startsWith('4star') ? '4star' : '5star'}
+          >
             <div className="goal-row-main">
-              <span className="goal-rank">{idx + 1}</span>
-              <span className="goal-name">{goal.name}</span>
-              <span className="goal-kind">{KIND_LABELS[goal.kind]}</span>
+              <GoalIcon kind={goal.kind} />
+              <GoalNameInput name={goal.name} displayName={goalDisplayName(goal)} onCommit={(name) => dispatch({ type: 'EDIT_GOAL', id: goal.id, name })} />
               {isFourStar(goal) && (
-                <label className="goal-target-level">
-                  <span>wait for</span>
-                  <select
-                    value={goal.targetLevel ?? (goal.kind === '4star_weapon' ? 1 : 0)}
-                    onChange={(e) => dispatch({ type: 'SET_GOAL_TARGET_LEVEL', id: goal.id, targetLevel: Number(e.target.value) })}
-                  >
-                    {(goal.kind === '4star_character' ? CHARACTER_LEVEL_OPTIONS : WEAPON_LEVEL_OPTIONS).map((lvl) => (
-                      <option key={lvl} value={lvl}>
-                        {goal.kind === '4star_character' ? `C${lvl}` : `R${lvl}`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <span className="goal-actions">
-                <button type="button" disabled={idx === 0} onClick={() => dispatch({ type: 'MOVE_GOAL', id: goal.id, direction: 'up' })} aria-label="Move up">
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  disabled={idx === state.goals.length - 1}
-                  onClick={() => dispatch({ type: 'MOVE_GOAL', id: goal.id, direction: 'down' })}
-                  aria-label="Move down"
+                <select
+                  className="level-select"
+                  aria-label={goal.kind === '4star_character' ? 'Constellation to wait for' : 'Refinement to wait for'}
+                  value={goal.targetLevel ?? (goal.kind === '4star_weapon' ? 1 : 0)}
+                  onChange={(e) => dispatch({ type: 'SET_GOAL_TARGET_LEVEL', id: goal.id, targetLevel: Number(e.target.value) })}
                 >
-                  ↓
-                </button>
-                <button type="button" onClick={() => dispatch({ type: 'REMOVE_GOAL', id: goal.id })} aria-label="Remove">
-                  ✕
-                </button>
-              </span>
+                  {(goal.kind === '4star_character' ? CHARACTER_LEVEL_OPTIONS : WEAPON_LEVEL_OPTIONS).map((lvl) => (
+                    <option key={lvl} value={lvl}>
+                      {goal.kind === '4star_character' ? `C${lvl}` : `R${lvl}`}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <select
+                className="kind-select"
+                aria-label="Goal kind"
+                value={goal.kind}
+                onChange={(e) => dispatch({ type: 'EDIT_GOAL', id: goal.id, kind: e.target.value as GoalKind })}
+              >
+                {(Object.entries(KIND_LABELS) as [GoalKind, string][]).map(([value, label]) => (
+                  <option key={value} value={value} data-tone={value.startsWith('4star') ? '4star' : '5star'} disabled={kindIsFull(value, goal.id)}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <button type="button" className="goal-remove" onClick={() => dispatch({ type: 'REMOVE_GOAL', id: goal.id })} aria-label={`Remove ${goal.name}`} title="Remove">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                  <path d="M4 7h16M9 7V4.5h6V7M6.5 7l.9 12.2a1.8 1.8 0 0 0 1.8 1.6h5.6a1.8 1.8 0 0 0 1.8-1.6L17.5 7M10 11v6M14 11v6" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className="goal-drag-handle"
+                aria-label={`Reorder ${goal.name}: drag, or use the up and down arrow keys`}
+                title="Drag to reorder"
+                {...handleProps(goal.id, idx)}
+              >
+                <svg viewBox="0 0 10 16" width="10" height="16" fill="currentColor" aria-hidden="true" focusable="false">
+                  {[2, 8, 14].flatMap((cy) => [2, 8].map((cx) => <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="1.5" />))}
+                </svg>
+              </button>
             </div>
             {goal.kind === '4star_character' && characterAnchorGroups.length > 0 && (
               <div className="goal-row-anchors">
@@ -239,7 +271,7 @@ export function GoalList() {
                 if (otherWeaponGoals.length === 0) return null;
                 return (
                   <div className="goal-row-anchors">
-                    <span>same window as:</span>
+                    <span>same banner as:</span>
                     {otherWeaponGoals.map((g) => (
                       <label key={g.id} className="anchor-option">
                         <input type="checkbox" checked={goal.linkedWeaponGoalId === g.id} onChange={() => toggleWeaponLink(goal, g.id)} />

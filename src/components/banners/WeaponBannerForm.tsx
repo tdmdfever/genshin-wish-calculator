@@ -44,7 +44,7 @@ export function WeaponBannerForm() {
         {showAdvanced ? 'Hide' : 'Show'} advanced (4★ pity)
       </button>
       {showAdvanced && (
-        <div className="advanced-section">
+        <div className="advanced-section" data-tone="4star">
           <label className="field">
             <span>4★ pity (pulls since last 4★)</span>
             <NumberField value={pity4} min={0} max={9} onChange={(n) => dispatch({ type: 'SET_WEAPON_STATE', patch: { pity4: n } })} />

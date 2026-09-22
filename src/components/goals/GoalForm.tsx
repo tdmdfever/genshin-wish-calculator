@@ -58,17 +58,24 @@ export function GoalForm() {
   const [linkedWeaponGoalId, setLinkedWeaponGoalId] = useState<string | undefined>(undefined);
   const [linkedCharacterGoalId, setLinkedCharacterGoalId] = useState<string | undefined>(undefined);
 
-  const existingWeapon5Goals = state.goals.filter((g) => g.kind === '5star_weapon');
   // No cap on total 5star_weapon goals (removed 2026-08-19 — directly profiled:
   // even 16 total, or several linked pairs, run in well under 300ms at the
   // default pull budget, since each goal's own persistent dimension collapses
   // to a point mass once its own phase requires it — nothing like the 4-star
   // cross-phase compounding cost. The old "2 total" cap was a stale artifact
   // that predated explicit linking, never backed by goalValidation.ts).
-  // A new goal can link to ANY existing 5star_weapon goal not already claimed
-  // by another link — weapon linking has no adjacency requirement (unlike
-  // character linking below).
-  const weaponLinkCandidates = kind === '5star_weapon' ? existingWeapon5Goals.filter((g) => !g.linkedWeaponGoalId) : [];
+  // Like the character checkbox below, the form offers only the NEAREST earlier
+  // 5star_weapon goal (unless it is already linked to another — a brand-new goal
+  // shouldn't steal its partner). Weapon linking has no adjacency requirement, so
+  // any other pairing is made from that goal's own row ("same banner as").
+  const weaponLinkCandidate = (() => {
+    if (kind !== '5star_weapon') return undefined;
+    for (let i = state.goals.length - 1; i >= 0; i--) {
+      const g = state.goals[i];
+      if (g.kind === '5star_weapon') return g.linkedWeaponGoalId ? undefined : g;
+    }
+    return undefined;
+  })();
 
   const isFourStar = kind === '4star_character' || kind === '4star_weapon';
   const fourStarCountOfKind = state.goals.filter((g) => g.kind === kind).length;
@@ -178,35 +185,37 @@ export function GoalForm() {
   }
 
   return (
-    <form className="goal-form" onSubmit={handleSubmit}>
+    <form className="goal-form" data-tone={isFourStar ? '4star' : '5star'} onSubmit={handleSubmit}>
       <input type="text" placeholder="Name (e.g. Furina, Homa)" value={name} onChange={(e) => setName(e.target.value)} />
-      <select value={kind} onChange={(e) => handleKindChange(e.target.value as GoalKind)}>
+      {isFourStar && (
+        <select
+          className="level-select"
+          aria-label={kind === '4star_character' ? 'Constellation to wait for' : 'Refinement to wait for'}
+          value={targetLevel}
+          onChange={(e) => setTargetLevel(Number(e.target.value))}
+        >
+          {kind === '4star_character'
+            ? CHARACTER_LEVEL_OPTIONS.map((c) => (
+                <option key={c} value={c}>
+                  C{c}
+                </option>
+              ))
+            : WEAPON_LEVEL_OPTIONS.map((r) => (
+                <option key={r} value={r}>
+                  R{r}
+                </option>
+              ))}
+        </select>
+      )}
+      <select className="kind-select" aria-label="Goal kind" value={kind} onChange={(e) => handleKindChange(e.target.value as GoalKind)}>
         {(Object.entries(KIND_LABELS) as [GoalKind, string][]).map(([value, label]) => (
-          <option key={value} value={value}>
+          <option key={value} value={value} data-tone={value.startsWith('4star') ? '4star' : '5star'}>
             {label}
           </option>
         ))}
       </select>
-      {isFourStar && (
-        <label className="target-level-field">
-          <span>Wait for</span>
-          <select value={targetLevel} onChange={(e) => setTargetLevel(Number(e.target.value))}>
-            {kind === '4star_character'
-              ? CHARACTER_LEVEL_OPTIONS.map((c) => (
-                  <option key={c} value={c}>
-                    C{c}
-                  </option>
-                ))
-              : WEAPON_LEVEL_OPTIONS.map((r) => (
-                  <option key={r} value={r}>
-                    R{r}
-                  </option>
-                ))}
-          </select>
-        </label>
-      )}
       <button type="submit" disabled={!name.trim() || blockedByFourStarCap}>
-        Add goal
+        Add
       </button>
       {characterLinkCandidate && (
         <label className="weapon-link-field">
@@ -225,24 +234,21 @@ export function GoalForm() {
             : 'A 5★ character goal is its own sequential phase by default — chase as many in a row as you like with no detour needed.'}
         </p>
       )}
-      {kind === '5star_weapon' && weaponLinkCandidates.length > 0 && (
+      {weaponLinkCandidate && (
         <label className="weapon-link-field">
-          <span>Same weapon-banner window as:</span>
-          <select value={linkedWeaponGoalId ?? ''} onChange={(e) => setLinkedWeaponGoalId(e.target.value || undefined)}>
-            <option value="">— none (its own window) —</option>
-            {weaponLinkCandidates.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
+          <input
+            type="checkbox"
+            checked={!!linkedWeaponGoalId}
+            onChange={(e) => setLinkedWeaponGoalId(e.target.checked ? weaponLinkCandidate.id : undefined)}
+          />
+          Same banner as {weaponLinkCandidate.name}?
         </label>
       )}
       {kind === '5star_weapon' && (
         <p className="form-hint-full">
-          {weaponLinkCandidates.length > 0
-            ? "Pick the OTHER weapon goal here if both are on the SAME real weapon banner (shared Epitomized Path, opportunistic crediting either way) — leave as \"none\" if they're on two different real phases."
-            : 'A 5★ weapon goal is its own window by default — link it to another one later if they share the same real weapon banner.'}
+          {weaponLinkCandidate
+            ? 'Check this if both are on the SAME real weapon banner (shared Epitomized Path, opportunistic crediting either way) — leave unchecked if this is a later, separate banner.'
+            : 'A 5★ weapon goal is its own banner by default — link it to another one from its row if they share the same real weapon banner.'}
         </p>
       )}
       {blockedByFourStarCap && (
@@ -253,7 +259,7 @@ export function GoalForm() {
       )}
       {isFourStar && (
         <p className="form-hint-full">
-          Priority moves on once you reach this level — but the odds chart always shows every level from {kind === '4star_character' ? 'C0 to C6' : 'R1 to R5'}.
+          The level on the left is the one this goal waits for — priority moves on once you reach it — but the odds chart always shows every level from {kind === '4star_character' ? 'C0 to C6' : 'R1 to R5'}.
         </p>
       )}
       {kind === '4star_character' && characterAnchorGroups.length > 0 && (

@@ -1,30 +1,32 @@
+/* App layout and components. Colours, fonts, spacing and radii come from
+   styles/tokens.css (the style guide); nothing here hard-codes them. */
 .app {
-  max-width: 980px;
+  max-width: var(--max-width-page);
   margin: 0 auto;
-  padding: 24px 20px 64px;
+  padding: var(--space-3) var(--space-2) var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: var(--space-3);
 }
 
 .app-header p {
-  color: var(--text-secondary);
-  margin-top: 4px;
+  color: var(--color-text-muted);
+  margin-top: 0.4rem;
 }
 
 .app-disclaimer {
-  font-size: 13px;
-  color: var(--text-muted);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 14px;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0.65rem 0.9rem;
 }
 
 .banners-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: var(--space-2);
 }
 
 @media (max-width: 720px) {
@@ -34,26 +36,27 @@
 }
 
 .banner-form {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 16px;
-  background: var(--surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  background: var(--color-surface);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0.75rem;
 }
 
 .banner-form legend {
+  font-family: var(--font-serif);
   font-weight: 600;
-  padding: 0 4px;
+  padding: 0 0.25rem;
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--text-secondary);
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
 }
 
 .field input,
@@ -64,23 +67,23 @@
 .number-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0.25rem;
 }
 
 .number-field input.has-error {
-  border-color: var(--error);
+  border-color: var(--color-error);
 }
 
 .field-error {
-  color: var(--error);
-  font-size: 12px;
+  color: var(--color-error);
+  font-size: 0.78rem;
   margin: 0;
 }
 
 .field-checkbox {
   flex-direction: row;
   align-items: center;
-  gap: 8px;
+  gap: 0.5rem;
 }
 
 .field-checkbox input {
@@ -88,141 +91,230 @@
 }
 
 .hint {
-  color: var(--text-muted);
+  color: var(--color-text-muted);
   font-weight: 400;
 }
 
+/* "Show advanced (4★ pity)": lavender, the 4-star colour, because it is 4-star pity */
 .advanced-toggle {
   align-self: flex-start;
   background: none;
   border: none;
-  color: var(--accent);
+  color: var(--color-accent-2);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 0.85rem;
   padding: 0;
+}
+
+.advanced-toggle:hover {
+  color: var(--color-accent-2-strong);
+  text-decoration: underline;
+}
+
+.advanced-toggle:focus-visible {
+  outline-color: var(--color-accent-2);
 }
 
 .advanced-section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-top: 4px;
-  border-top: 1px dashed var(--border);
+  gap: 0.75rem;
+  padding-top: 0.25rem;
+  border-top: 1px dashed var(--color-border-strong);
 }
 
 .section {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 16px;
-  background: var(--surface);
+  /* sizes shared by the goal rows and the Add form so their right-hand columns line up */
+  --goal-trash: 2rem;
+  --goal-handle: 1.1rem;
+  --goal-row-gap: 0.65rem;
+  --goal-row-pad: 0.65rem;
+  --goal-form-gap: var(--goal-row-gap);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  background: var(--color-surface);
 }
 
 .section h2 {
-  margin-bottom: 12px;
-  font-size: 16px;
+  margin-bottom: 0.75rem;
+  font-size: 1.1rem;
 }
 
 .empty-hint {
-  color: var(--text-muted);
-  font-size: 13px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
 }
 
 .goal-list {
   list-style: none;
-  margin: 0 0 12px;
+  margin: 0 0 0.75rem;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0.4rem;
 }
 
 .goal-row {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  gap: 0.4rem;
+  padding: 0.4rem var(--goal-row-pad);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-2);
 }
 
 .goal-row.has-error {
-  border-color: var(--error);
+  border-color: var(--color-error);
 }
 
 .goal-row-main {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--goal-row-gap);
 }
 
 .goal-row-anchors {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-muted);
-  padding-left: 1.5em;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  padding-left: calc(1.4rem + 0.65rem + 9px);
 }
 
 .goal-row-error {
-  color: var(--error);
-  font-size: 12px;
+  color: var(--color-error);
+  font-size: 0.78rem;
   margin: 0;
-  padding-left: 1.5em;
+  padding-left: calc(1.4rem + 0.65rem + 9px);
 }
 
-.goal-rank {
-  font-weight: 600;
-  color: var(--text-muted);
-  width: 1.5em;
+/* Row marker (GoalIcon.tsx): head-and-shoulders for a character, sword for a weapon, in the row's
+   star colour. Its width is the indent the anchor / error lines below line up with. */
+.goal-icon {
+  flex: none;
+  width: 1.4rem;
+  height: 1.4rem;
+  color: var(--tone);
 }
 
-.goal-name {
-  font-weight: 600;
+/* The kind dropdown: its closed text takes the selected kind's star colour (from the form's
+   data-tone), and each option is coloured by its own. Some platforms (macOS Safari/Chrome) draw
+   the open list natively and ignore option colours; the closed text always works. */
+.kind-select,
+.level-select {
+  font-size: 0.85rem;
+  padding: 4px 6px;
+}
+
+.kind-select {
+  color: var(--tone);
+}
+
+.kind-select option {
+  color: var(--tone);
+}
+
+/* The name reads as plain text; a box appears on hover and focus to show it can be edited in place
+   (GoalNameInput.tsx). */
+.goal-name-input {
   flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  background: transparent;
+  border-color: transparent;
 }
 
-.goal-kind {
-  color: var(--text-secondary);
-  font-size: 13px;
+.goal-name-input:hover {
+  border-color: var(--color-border-strong);
 }
 
-.goal-target-level {
+.goal-name-input:focus {
+  background: var(--color-surface);
+  border-color: var(--tone);
+}
+
+/* Drag handle at the row's right edge (useDragReorder.ts): six dots, grab cursor. touch-action
+   none lets a finger drag it without scrolling the page. */
+.goal-drag-handle {
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.goal-target-level select {
-  padding: 2px 4px;
-  font-size: 12px;
-}
-
-.goal-actions {
-  display: flex;
-  gap: 4px;
-}
-
-.goal-actions button {
+  align-self: stretch;
+  justify-content: center;
+  width: var(--goal-handle);
+  padding: 0;
   background: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: grab;
+  touch-action: none;
+}
+
+.goal-drag-handle:hover {
+  color: var(--tone);
+}
+
+.is-dragging .goal-drag-handle {
+  cursor: grabbing;
+  color: var(--tone);
+}
+
+.goal-list.is-reordering {
+  user-select: none;
+  cursor: grabbing;
+}
+
+.goal-row.is-dragging {
+  position: relative;
+  z-index: 1;
+  border-color: var(--tone);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.45);
+}
+
+/* The kind dropdown on each row (and the Add form's): its closed text takes the star colour */
+/* Trash button: a soft red outline icon; the red fills in a little on hover */
+.goal-remove {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: var(--goal-trash);
+  height: var(--goal-trash);
+  padding: 0;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: color-mix(in srgb, var(--color-error) 75%, var(--color-surface-2));
+  cursor: pointer;
+}
+
+.goal-remove:hover {
+  color: var(--color-error);
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 14%, var(--color-surface-2));
+}
+
+/* Secondary button: a raised key that turns accent on hover */
+.table-toggle {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   padding: 2px 8px;
-  color: var(--text-secondary);
+  color: var(--color-text);
 }
 
-.goal-actions button:disabled {
-  opacity: 0.35;
-  cursor: default;
+.table-toggle:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
 }
 
 .goal-form {
   display: flex;
-  gap: 8px;
+  gap: var(--goal-form-gap);
   flex-wrap: wrap;
   align-items: center;
 }
@@ -232,137 +324,139 @@
   min-width: 160px;
 }
 
-.goal-form button {
-  background: var(--accent);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  padding: 7px 14px;
+/* Primary buttons: solid, sans, softly rounded. They read --tone (index.css): outside any
+   data-tone that is gold; the Add-goal form sets it from the selected kind, so the button is gold
+   for a 5-star goal and lavender for a 4-star one. */
+.goal-form button,
+.trace-panel button {
+  background: var(--tone);
+  color: var(--color-accent-contrast);
+  border: 1px solid var(--tone);
+  border-radius: var(--radius);
+  padding: 0.45rem 1rem;
+  font-weight: 600;
   cursor: pointer;
 }
 
-.goal-form button:disabled {
+/* The Add button is exactly as wide as the trash button and drag handle plus the row's gaps and
+   padding, which puts the form's kind dropdown directly above the rows' kind dropdowns. */
+.goal-form button[type='submit'] {
+  width: calc(var(--goal-trash) + var(--goal-handle) + 2 * var(--goal-row-gap) + var(--goal-row-pad) + 1px - var(--goal-form-gap));
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.goal-form button:hover:not(:disabled),
+.trace-panel button:hover:not(:disabled) {
+  background: var(--tone-strong);
+  border-color: var(--tone-strong);
+}
+
+.goal-form button:disabled,
+.trace-panel button:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
 .form-warning {
   width: 100%;
-  color: var(--text-muted);
-  font-size: 12px;
-  margin: 4px 0 0;
-}
-
-.target-level-field {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  margin: 0.25rem 0 0;
 }
 
 .weapon-link-field {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-secondary);
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
   width: 100%;
 }
 
 .form-hint-full {
   width: 100%;
-  color: var(--text-muted);
-  font-size: 12px;
-  margin: 4px 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  margin: 0.25rem 0 0;
 }
 
 .anchor-field {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-top: 4px;
-  border-top: 1px dashed var(--border);
+  gap: 0.4rem;
+  padding-top: 0.25rem;
+  border-top: 1px dashed var(--color-border-strong);
 }
 
 .anchor-field-label {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
   font-weight: 600;
 }
 
 .anchor-options {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 0.75rem;
 }
 
 .anchor-option {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--text-secondary);
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
 }
 
 .trace-panel {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 16px;
-  background: var(--surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  background: var(--color-surface);
 }
 
 .trace-panel summary {
   cursor: pointer;
+  font-family: var(--font-serif);
   font-weight: 600;
-  font-size: 16px;
+  font-size: 1.1rem;
 }
 
 .trace-panel button {
-  background: var(--accent);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  padding: 7px 14px;
-  cursor: pointer;
-  margin-top: 8px;
-}
-
-.trace-panel button:disabled {
-  opacity: 0.5;
-  cursor: default;
+  margin-top: 0.5rem;
 }
 
 .trace-seed {
-  color: var(--text-muted);
-  font-size: 12px;
-  margin: 10px 0 4px;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  margin: 0.65rem 0 0.25rem;
 }
 
 .trace-output {
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 480px;
   overflow-y: auto;
-  background: var(--page-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0.75rem;
   margin: 0;
 }
 
 .trace-log-details {
-  margin-top: 10px;
+  margin-top: 0.65rem;
 }
 
 .trace-log-details summary {
   cursor: pointer;
   font-weight: 600;
-  font-size: 13px;
-  color: var(--text-secondary);
-  margin-bottom: 6px;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin-bottom: 0.4rem;
 }
