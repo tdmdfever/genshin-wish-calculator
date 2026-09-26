@@ -1,3 +1,4 @@
+import { defaultTargetLevel, isFourStarKind, levelLabel, targetLevelOf } from '../engine/goalKinds';
 import type { Goal } from '../engine/types';
 
 /**
@@ -8,10 +9,9 @@ import type { Goal } from '../engine/types';
  * 5★ goals are always just their name.
  */
 export function goalDisplayName(goal: Goal): string {
-  const level = goal.targetLevel ?? 0;
-  if (goal.kind === '4star_character' && level > 0) return `${goal.name} (C${level})`;
-  if (goal.kind === '4star_weapon' && level > 1) return `${goal.name} (R${level})`;
-  return goal.name;
+  if (!isFourStarKind(goal.kind)) return goal.name;
+  const level = targetLevelOf(goal);
+  return level > defaultTargetLevel(goal.kind) ? `${goal.name} (${levelLabel(goal.kind, level)})` : goal.name;
 }
 
 /** The engine only reads `name` to build labels, so passing it the display name is what puts the

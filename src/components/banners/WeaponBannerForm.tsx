@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useAppState } from '../../state/AppStateContext';
+import { useAppState } from '../../state/useAppState';
 import { NumberField } from '../common/NumberField';
 
 export function WeaponBannerForm() {
@@ -13,7 +13,7 @@ export function WeaponBannerForm() {
 
       <label className="field">
         <span>Current pity (pulls since last 5★)</span>
-        <NumberField value={pity5} min={0} max={79} onChange={(n) => dispatch({ type: 'SET_WEAPON_STATE', patch: { pity5: n } })} />
+        <NumberField value={pity5} min={0} max={76} onChange={(n) => dispatch({ type: 'SET_WEAPON_STATE', patch: { pity5: n } })} />
       </label>
 
       <label className="field field-checkbox">

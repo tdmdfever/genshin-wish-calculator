@@ -1,50 +1,10 @@
 import { useState } from 'react';
-import { useAppState } from '../../state/AppStateContext';
-import { buildPhases, computeCharacterWindowGoalsForPhase, computeCharacterWindowPartnerPhase } from '../../engine/phases';
+import { useAppState } from '../../state/useAppState';
 import { MAX_TOTAL_FOUR_STAR_GOALS_PER_BANNER } from '../../engine/goalValidation';
-import type { BannerKind, Goal, GoalKind } from '../../engine/types';
-
-const KIND_LABELS: Record<GoalKind, string> = {
-  '5star_character': '5★ character',
-  '4star_character': '4★ character',
-  '5star_weapon': '5★ weapon',
-  '4star_weapon': '4★ weapon',
-};
-
-const CHARACTER_LEVEL_OPTIONS = Array.from({ length: 7 }, (_, i) => i); // C0-C6
-const WEAPON_LEVEL_OPTIONS = Array.from({ length: 5 }, (_, i) => i + 1); // R1-R5
-
-/** For the character 4-star anchor picker: groups this list's 5star_character
- * goals by phase (a "same simultaneous phase" group has 1 or 2 members —
- * Goal.linkedCharacterGoalId — see its doc comment) and returns one option
- * per phase, so a user can anchor to an entire phase in one click instead of
- * picking individual 5-stars and risking a partial (invalid) selection.
- *
- * Twenty-first reported bug (2026-08-30) — see GoalList.tsx's identical
- * helper for the full doc comment: a linked-simultaneous pair split apart by
- * an interleaved detour now folds into ONE combined group (via
- * computeCharacterWindowPartnerPhase), matching what the engine — and
- * `applySymmetricLink`'s existing anchor auto-reconciliation — already treat
- * it as, instead of showing as two separate, misleadingly-independent options.
- */
-function computeCharacterAnchorGroups(goals: Goal[]): { ids: string[]; label: string }[] {
-  const phases = buildPhases(goals);
-  const groups: { ids: string[]; label: string }[] = [];
-  const seen = new Set<number>();
-  phases.forEach((phase, p) => {
-    if (phase.banner !== 'character' || seen.has(p)) return;
-    seen.add(p);
-    const partner = computeCharacterWindowPartnerPhase(phases, p);
-    const fiveStars =
-      partner !== undefined
-        ? computeCharacterWindowGoalsForPhase(phases, p).filter((g) => g.kind === '5star_character')
-        : phase.goals.filter((g) => g.kind === '5star_character');
-    if (partner !== undefined) seen.add(partner);
-    if (fiveStars.length === 0) return;
-    groups.push({ ids: fiveStars.map((g) => g.id), label: fiveStars.map((g) => g.name).join(' + ') });
-  });
-  return groups;
-}
+import { bannerOfKind, defaultTargetLevel, isFourStarKind, KIND_LABELS, MAX_ANCHOR_PHASES } from '../../engine/goalKinds';
+import type { GoalKind } from '../../engine/types';
+import { computeCharacterAnchorGroups, countSelectedGroups, defaultAnchors } from './anchorOptions';
+import { LevelSelect } from './LevelSelect';
 
 export function GoalForm() {
   const { state, dispatch } = useAppState();
@@ -58,16 +18,10 @@ export function GoalForm() {
   const [linkedWeaponGoalId, setLinkedWeaponGoalId] = useState<string | undefined>(undefined);
   const [linkedCharacterGoalId, setLinkedCharacterGoalId] = useState<string | undefined>(undefined);
 
-  // No cap on total 5star_weapon goals (removed 2026-08-19 — directly profiled:
-  // even 16 total, or several linked pairs, run in well under 300ms at the
-  // default pull budget, since each goal's own persistent dimension collapses
-  // to a point mass once its own phase requires it — nothing like the 4-star
-  // cross-phase compounding cost. The old "2 total" cap was a stale artifact
-  // that predated explicit linking, never backed by goalValidation.ts).
-  // Like the character checkbox below, the form offers only the NEAREST earlier
-  // 5star_weapon goal (unless it is already linked to another — a brand-new goal
-  // shouldn't steal its partner). Weapon linking has no adjacency requirement, so
-  // any other pairing is made from that goal's own row ("same banner as").
+  // The Add form only offers the nearest earlier 5★ weapon as a link (unless it's already linked —
+  // a new goal shouldn't steal its partner); any other pairing is made from a row's "same banner
+  // as". (No cap on 5★ weapon goals: each one's dimension collapses once its phase requires it, so
+  // even 16 run well under 300ms.)
   const weaponLinkCandidate = (() => {
     if (kind !== '5star_weapon') return undefined;
     for (let i = state.goals.length - 1; i >= 0; i--) {
@@ -77,44 +31,21 @@ export function GoalForm() {
     return undefined;
   })();
 
-  const isFourStar = kind === '4star_character' || kind === '4star_weapon';
+  const isFourStar = isFourStarKind(kind);
   const fourStarCountOfKind = state.goals.filter((g) => g.kind === kind).length;
-  const fourStarBannerKind: BannerKind = kind === '4star_character' ? 'character' : 'weapon';
+  const fourStarBannerKind = bannerOfKind(kind);
   const blockedByFourStarCap = isFourStar && fourStarCountOfKind >= MAX_TOTAL_FOUR_STAR_GOALS_PER_BANNER[fourStarBannerKind];
   const fiveStarWeaponGoals = state.goals.filter((g) => g.kind === '5star_weapon');
   const characterAnchorGroups = computeCharacterAnchorGroups(state.goals);
-  const maxAnchors = kind === '4star_character' ? 2 : 1;
+  const maxAnchors = isFourStarKind(kind) ? MAX_ANCHOR_PHASES[kind] : 0;
 
-  // When exactly ONE candidate phase exists, pre-check it automatically (the
-  // overwhelmingly common case — a single 5★ plus its own 4★ — still works
-  // with zero clicks) but ONLY as long as the user hasn't actually touched
-  // the checkboxes. The moment they do (even to uncheck this single default
-  // back to nothing), `anchors`/`anchorsTouched` take over completely — this
-  // is what makes "this 4★ is NOT on the one 5★ currently listed" expressible
-  // at all (eighteenth-reported-bug follow-up, 2026-08-20): before this, an
-  // unchecked single-candidate box and a never-touched one were the same
-  // underlying state (`undefined` after submit), so unchecking had no effect.
-  const singleCandidateDefault =
-    kind === '4star_character'
-      ? characterAnchorGroups.length === 1
-        ? characterAnchorGroups[0].ids
-        : undefined
-      : kind === '4star_weapon'
-        ? fiveStarWeaponGoals.length === 1
-          ? [fiveStarWeaponGoals[0].id]
-          : undefined
-        : undefined;
-  const effectiveAnchors = anchorsTouched ? anchors : (singleCandidateDefault ?? []);
+  // With exactly one candidate, it's pre-checked (zero clicks for the common case) until the user
+  // touches the checkboxes; after that their choice stands — including unchecking it, which submits
+  // an explicit [] ("not on the 5★ currently listed").
+  const effectiveAnchors = anchorsTouched ? anchors : defaultAnchors(kind, characterAnchorGroups, fiveStarWeaponGoals);
 
-  // A NEW 5star_character goal is appended to the END of the list, so the only
-  // possible link partner is the nearest EXISTING 5star_character goal walking
-  // backward from the end — but linking only requires no OTHER 5star_character
-  // goal between them (see types.ts's linkedCharacterGoalId doc comment,
-  // relaxed 2026-08-19 to tolerate 4star_character/weapon-banner goals in
-  // between), so this has to walk past those instead of only ever checking the
-  // literal last goal. If the nearest 5-star found is already linked to
-  // someone else, don't offer to steal its partner from a brand-new goal —
-  // too surprising a side effect.
+  // A new 5★ character goes at the end, so its only possible link partner is the nearest earlier
+  // 5★ character (4★ and weapon goals between are fine). Not offered if that one is already linked.
   const characterLinkCandidate = (() => {
     if (kind !== '5star_character') return undefined;
     for (let i = state.goals.length - 1; i >= 0; i--) {
@@ -126,7 +57,7 @@ export function GoalForm() {
 
   function handleKindChange(next: GoalKind) {
     setKind(next);
-    setTargetLevel(next === '4star_weapon' ? 1 : 0);
+    setTargetLevel(isFourStarKind(next) ? defaultTargetLevel(next) : 0);
     setAnchors([]);
     setAnchorsTouched(false);
     setLinkedWeaponGoalId(undefined);
@@ -143,8 +74,7 @@ export function GoalForm() {
     }
     // maxAnchors counts PHASE-GROUPS, not raw ids — a linked simultaneous
     // pair (2 ids, 1 phase) shouldn't exhaust the whole budget by itself.
-    const selectedGroupCount = characterAnchorGroups.filter((g) => g.ids.every((id) => prev.includes(id))).length;
-    if (selectedGroupCount + 1 > maxAnchors) return;
+    if (countSelectedGroups(characterAnchorGroups, prev) + 1 > maxAnchors) return;
     setAnchors([...prev, ...ids]);
   }
 
@@ -187,26 +117,7 @@ export function GoalForm() {
   return (
     <form className="goal-form" data-tone={isFourStar ? '4star' : '5star'} onSubmit={handleSubmit}>
       <input type="text" placeholder="Name (e.g. Furina, Homa)" value={name} onChange={(e) => setName(e.target.value)} />
-      {isFourStar && (
-        <select
-          className="level-select"
-          aria-label={kind === '4star_character' ? 'Constellation to wait for' : 'Refinement to wait for'}
-          value={targetLevel}
-          onChange={(e) => setTargetLevel(Number(e.target.value))}
-        >
-          {kind === '4star_character'
-            ? CHARACTER_LEVEL_OPTIONS.map((c) => (
-                <option key={c} value={c}>
-                  C{c}
-                </option>
-              ))
-            : WEAPON_LEVEL_OPTIONS.map((r) => (
-                <option key={r} value={r}>
-                  R{r}
-                </option>
-              ))}
-        </select>
-      )}
+      {isFourStarKind(kind) && <LevelSelect kind={kind} value={targetLevel} onChange={setTargetLevel} />}
       <select className="kind-select" aria-label="Goal kind" value={kind} onChange={(e) => handleKindChange(e.target.value as GoalKind)}>
         {(Object.entries(KIND_LABELS) as [GoalKind, string][]).map(([value, label]) => (
           <option key={value} value={value} data-tone={value.startsWith('4star') ? '4star' : '5star'}>
@@ -268,8 +179,7 @@ export function GoalForm() {
           <div className="anchor-options">
             {characterAnchorGroups.map((group) => {
               const isSelected = group.ids.every((id) => effectiveAnchors.includes(id));
-              const selectedGroupCount = characterAnchorGroups.filter((g) => g.ids.every((id) => effectiveAnchors.includes(id))).length;
-              const disabled = !isSelected && selectedGroupCount + 1 > maxAnchors;
+              const disabled = !isSelected && countSelectedGroups(characterAnchorGroups, effectiveAnchors) + 1 > maxAnchors;
               return (
                 <label key={group.ids.join(',')} className="anchor-option">
                   <input type="checkbox" checked={isSelected} disabled={disabled} onChange={() => toggleCharacterAnchorGroup(group.ids)} />

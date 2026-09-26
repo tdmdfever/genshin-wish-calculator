@@ -8,7 +8,8 @@ import { SettingsPanel } from './components/settings/SettingsPanel';
 import { ResultsChart } from './components/results/ResultsChart';
 import { BreakdownPanel } from './components/results/BreakdownPanel';
 import { TracePanel } from './components/trace/TracePanel';
-import { AppStateProvider, useAppState } from './state/AppStateContext';
+import { AppStateProvider } from './state/AppStateContext';
+import { useAppState } from './state/useAppState';
 import { buildSimulationInput } from './state/buildSimulationInput';
 import { useSimulation } from './state/useSimulation';
 import { validateGoals } from './engine/goalValidation';
@@ -21,12 +22,14 @@ function Calculator() {
   const input = buildSimulationInput(validationErrors.length > 0 ? { ...state, goals: [] } : state);
   const { result, isRunning } = useSimulation(input);
   // Unlike `input` above, NOT gated to an empty goal list when invalid — the
-  // trace panel handles `disabled` itself, so it can still show the same error
-  // guidance the rest of the app does rather than silently tracing nothing.
+  // trace panel disables itself (disabledReason) and says why.
   const traceInput = buildSimulationInput(state);
   // Shared with ResultsChart so the breakdown panel stays synced to whatever pull
   // count is active there (hover or the full-budget default).
   const [activeIdx, setActiveIdx] = useState(0);
+  // A shorter result (smaller pull budget) renders once before ResultsChart's effect resets
+  // activeIdx — clamp so that frame doesn't index past the end of the arrays.
+  const shownIdx = result ? Math.min(activeIdx, result.pullCounts.length - 1) : 0;
 
   return (
     <div className="app">
@@ -65,15 +68,18 @@ function Calculator() {
           <p className="app-disclaimer">Fix the goal list errors above (highlighted in red) to see your odds.</p>
         ) : (
           <>
-            <ResultsChart result={result} goals={state.goals} isRunning={isRunning} activeIdx={activeIdx} onActiveIdxChange={setActiveIdx} />
+            <ResultsChart result={result} goals={state.goals} isRunning={isRunning} activeIdx={shownIdx} onActiveIdxChange={setActiveIdx} />
             {result && (
-              <BreakdownPanel breakdowns={result.breakdowns} goals={state.goals} activeIdx={activeIdx} activePull={result.pullCounts[activeIdx] ?? 0} />
+              <BreakdownPanel breakdowns={result.breakdowns} goals={state.goals} activeIdx={shownIdx} activePull={result.pullCounts[shownIdx]} />
             )}
           </>
         )}
       </section>
 
-      <TracePanel input={traceInput} disabled={validationErrors.length > 0 || state.goals.length === 0} />
+      <TracePanel
+        input={traceInput}
+        disabledReason={state.goals.length === 0 ? 'no-goals' : validationErrors.length > 0 ? 'invalid-goals' : undefined}
+      />
     </div>
   );
 }

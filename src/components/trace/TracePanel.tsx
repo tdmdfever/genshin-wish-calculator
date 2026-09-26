@@ -1,32 +1,27 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { formatGoalRoster, formatTrace, traceOneRun } from '../../engine/trace';
 import type { SimulationInput } from '../../engine/types';
 
 /**
- * Devtools-style "sanity check" panel — reuses the exact same `traceOneRun`/
- * `formatTrace`/`formatGoalRoster` machinery `trace.survey.test.ts` uses to
- * narrate one concrete, reproducible pull-by-pull playthrough of the CURRENT
- * goal list and starting state, so a real player can eyeball "does this pulling
- * sequence make sense" without needing to run the test suite. Added at the
- * user's explicit request (2026-08-19) — this reverses an earlier, deliberate
- * decision (see CLAUDE.md's testing-methodology section) to keep the trace tool
- * script/test-only; the user decided they want it live after using the
- * test-only version extensively to verify the 5star_weapon window-linking fix.
- *
- * Deliberately NOT auto-computed on every state change (unlike the exact-engine
- * results, which run debounced in a Web Worker) — one trace is cheap (a single
- * Monte Carlo walkthrough, not the exact DP engine), but there's no reason to
- * spend it until the user actually wants to look at one.
+ * Devtools-style panel: one concrete, reproducible pull-by-pull playthrough of the current goal list
+ * and state (trace.ts — the same machinery trace.survey.test.ts uses), so a player can check the
+ * pulling order makes sense. Generated on request rather than on every change.
  */
-export function TracePanel({ input, disabled }: { input: SimulationInput; disabled: boolean }) {
+export function TracePanel({ input, disabledReason }: { input: SimulationInput; disabledReason?: 'no-goals' | 'invalid-goals' }) {
+  const disabled = disabledReason !== undefined;
   const [seed, setSeed] = useState<number | null>(null);
 
   function rollNewTrace() {
     setSeed(Math.floor(Math.random() * 2 ** 31));
   }
 
-  const run = seed !== null && !disabled ? traceOneRun(input, seed) : null;
-  const formatted = run ? formatTrace(run, input.goals) : null;
+  // Only re-traced when the seed or the input's content changes, not on every render of the app.
+  const inputKey = JSON.stringify(input);
+  const { run, formatted } = useMemo(() => {
+    const run = seed !== null && !disabled ? traceOneRun(input, seed) : null;
+    return { run, formatted: run ? formatTrace(run, input.goals) : null };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed, disabled, inputKey]);
 
   return (
     <details className="trace-panel">
@@ -40,7 +35,8 @@ export function TracePanel({ input, disabled }: { input: SimulationInput; disabl
       <button type="button" onClick={rollNewTrace} disabled={disabled}>
         {run ? 'Re-roll (new seed)' : 'Generate trace'}
       </button>
-      {disabled && <p className="form-warning">Fix the goal list errors above first.</p>}
+      {disabledReason === 'no-goals' && <p className="form-hint-full">Add a goal above to trace a run.</p>}
+      {disabledReason === 'invalid-goals' && <p className="form-warning">Fix the goal list errors above first.</p>}
       {run && formatted && (
         <>
           <p className="trace-seed">seed {seed}</p>

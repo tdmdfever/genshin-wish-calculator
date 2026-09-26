@@ -1,3 +1,4 @@
+import { isFourStarKind, levelLabel, targetLevelOf } from '../../engine/goalKinds';
 import type { Goal, LevelBreakdownSeries } from '../../engine/types';
 import './BreakdownPanel.css';
 
@@ -9,8 +10,8 @@ interface Props {
 }
 
 /** The level a 4-star goal is waiting for, as it appears in `levelLabels` ("C2" / "R3"). */
-function goalLevelLabel(goal: Goal): string {
-  return goal.kind === '4star_character' ? `C${goal.targetLevel ?? 0}` : `R${goal.targetLevel ?? 1}`;
+function goalLevelLabel(goal: Goal): string | undefined {
+  return isFourStarKind(goal.kind) ? levelLabel(goal.kind, targetLevelOf(goal)) : undefined;
 }
 
 /**

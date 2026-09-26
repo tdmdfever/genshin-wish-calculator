@@ -3,14 +3,9 @@ import type { AppState } from './AppStateContext';
 import { withDisplayNames } from './goalDisplay';
 
 /**
- * The featured-pool/Epitomized-Path config used to be derived HERE, once,
- * globally, from the whole goal list — but that caused real bugs (see CLAUDE.md):
- * a later phase's own weapon could never benefit from a Fate Point guarantee, and
- * naming 4+ named 4-stars across different phases silently diluted every phase's
- * split fraction. That derivation now happens PER PHASE, inside the engine (see
- * phases.ts's computeCharacterBannerConfigForPhase/computeWeaponBannerConfigForPhase),
- * so this function only needs to forward state and goals — the goal list itself is
- * all the engine needs to derive each phase's own config.
+ * Forwards app state to the engine. Banner configs (featured 4★ pools, Epitomized Path identities)
+ * aren't built here: the engine derives them per phase from the goal list (phases.ts's
+ * compute*BannerConfigForPhase).
  */
 export function buildSimulationInput(state: AppState): SimulationInput {
   return {
@@ -21,7 +16,5 @@ export function buildSimulationInput(state: AppState): SimulationInput {
     crParams: state.crParams,
     // display names ("Xingqiu (C2)") so every label the engine builds carries the level
     goals: withDisplayNames(state.goals),
-    trialCount: state.trialCount,
-    seed: state.seed,
   };
 }

@@ -1,4 +1,4 @@
-import { useAppState } from '../../state/AppStateContext';
+import { useAppState } from '../../state/useAppState';
 import { NumberField } from '../common/NumberField';
 
 export function SettingsPanel() {

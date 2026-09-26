@@ -1,88 +1,28 @@
-import { useAppState } from '../../state/AppStateContext';
+import { useAppState } from '../../state/useAppState';
 import { MAX_TOTAL_FOUR_STAR_GOALS_PER_BANNER, validateGoals } from '../../engine/goalValidation';
-import { buildPhases, computeCharacterWindowGoalsForPhase, computeCharacterWindowPartnerPhase, findFlankingLinkedPair } from '../../engine/phases';
+import { bannerOfKind, isFourStarKind, KIND_LABELS, MAX_ANCHOR_PHASES, targetLevelOf } from '../../engine/goalKinds';
+import { findFlankingLinkedPair } from '../../engine/phases';
 import type { Goal, GoalKind } from '../../engine/types';
+import { computeCharacterAnchorGroups, countSelectedGroups, defaultAnchors, type CharacterAnchorGroup } from './anchorOptions';
 import { goalDisplayName } from '../../state/goalDisplay';
 import { GoalIcon } from './GoalIcon';
 import { GoalNameInput } from './GoalNameInput';
+import { LevelSelect } from './LevelSelect';
 import { useDragReorder } from './useDragReorder';
 
+/** The anchors a 4★ goal's checkboxes show and act on: its own explicit list if it has one
+ * (an explicit empty list means "not on any of these"), otherwise the default candidate. */
+function effectiveAnchorsFor(goal: Goal, characterAnchorGroups: CharacterAnchorGroup[], fiveStarWeaponGoals: Goal[]): string[] {
+  return goal.anchoredFiveStarGoalIds ?? defaultAnchors(goal.kind, characterAnchorGroups, fiveStarWeaponGoals);
+}
+
 function maxAnchorsFor(goal: Goal): number {
-  return goal.kind === '4star_character' ? 2 : 1;
+  return isFourStarKind(goal.kind) ? MAX_ANCHOR_PHASES[goal.kind] : 0;
 }
 
-/** The anchors a 4★ goal's checkboxes should actually SHOW/act on: its own
- * explicit value if it has one (including an explicit empty array — a
- * deliberate "not on any of these," see phases.ts's resolveFourStarBlockingPhase),
- * otherwise the single-candidate default when exactly one phase is available
- * (matching GoalForm.tsx's identically-motivated pre-check-by-default, so a
- * never-touched goal's checkbox visually matches what the engine actually
- * computes for it instead of always showing unchecked). Falls back to `[]`
- * only when there's genuinely nothing to default to (0 or 2+ candidates). */
-function effectiveAnchorsFor(goal: Goal, characterAnchorGroups: { ids: string[]; label: string }[], fiveStarWeaponGoals: Goal[]): string[] {
-  if (goal.anchoredFiveStarGoalIds !== undefined) return goal.anchoredFiveStarGoalIds;
-  if (goal.kind === '4star_character') return characterAnchorGroups.length === 1 ? characterAnchorGroups[0].ids : [];
-  if (goal.kind === '4star_weapon') return fiveStarWeaponGoals.length === 1 ? [fiveStarWeaponGoals[0].id] : [];
-  return [];
-}
-
-const KIND_LABELS: Record<GoalKind, string> = {
-  '5star_character': '5★ character',
-  '4star_character': '4★ character',
-  '5star_weapon': '5★ weapon',
-  '4star_weapon': '4★ weapon',
-};
-
-const CHARACTER_LEVEL_OPTIONS = Array.from({ length: 7 }, (_, i) => i); // C0-C6
-const WEAPON_LEVEL_OPTIONS = Array.from({ length: 5 }, (_, i) => i + 1); // R1-R5
-
-function isFourStar(goal: Goal): boolean {
-  return goal.kind === '4star_character' || goal.kind === '4star_weapon';
-}
-
-/** Groups this list's 5star_character goals by phase — see GoalForm.tsx's
- * identically-named helper (kept separate, matching this file's existing
- * pattern of duplicating small UI constants rather than cross-importing).
- *
- * Twenty-first reported bug (2026-08-30): a linked-simultaneous pair that
- * ISN'T literally adjacent (an interleaved weapon detour, or another 4-star,
- * splits them into two separate `Phase` objects — see phases.ts's own
- * buildPhases doc comment) used to show as two SEPARATE checkbox options
- * ("Odette" and "Miko") instead of one combined "Odette + Miko" the way a
- * literally-adjacent linked pair already does — even though the engine now
- * treats them as one real, shared window (computeCharacterWindowPartnerPhase)
- * and `applySymmetricLink` already auto-reconciles a 4-star's own anchors to
- * include both the instant they're linked. The checkboxes just weren't
- * reflecting that combined reality. Each phase index is only ever folded
- * into one group (via `seen`), so a window pair contributes a single
- * combined option, not two overlapping ones.
- */
-function computeCharacterAnchorGroups(goals: Goal[]): { ids: string[]; label: string }[] {
-  const phases = buildPhases(goals);
-  const groups: { ids: string[]; label: string }[] = [];
-  const seen = new Set<number>();
-  phases.forEach((phase, p) => {
-    if (phase.banner !== 'character' || seen.has(p)) return;
-    seen.add(p);
-    const partner = computeCharacterWindowPartnerPhase(phases, p);
-    const fiveStars =
-      partner !== undefined
-        ? computeCharacterWindowGoalsForPhase(phases, p).filter((g) => g.kind === '5star_character')
-        : phase.goals.filter((g) => g.kind === '5star_character');
-    if (partner !== undefined) seen.add(partner);
-    if (fiveStars.length === 0) return;
-    groups.push({ ids: fiveStars.map((g) => g.id), label: fiveStars.map((g) => g.name).join(' + ') });
-  });
-  return groups;
-}
-
-/** The nearest OTHER 5star_character goal in one direction from `idx`, walking
- * past any 4star_character/weapon-kind goals in between (they don't break
- * character-link adjacency — see types.ts's linkedCharacterGoalId doc
- * comment, relaxed 2026-08-19). Stops at the first 5star_character goal found
- * regardless of its own link state, excluding it only if it's already linked
- * to a THIRD goal (not `goals[idx]` itself) — offering to steal a partner from
- * a brand-new toggle would be a surprising side effect. */
+/** The nearest other 5★ character goal in one direction from `idx`, walking past 4★ and
+ * weapon-banner goals (they don't break a character link). Undefined if that goal is already linked
+ * to a third goal — offering to steal its partner would be a surprising side effect. */
 function findAdjacentCharacterLinkCandidate(goals: Goal[], idx: number, direction: 1 | -1): Goal | undefined {
   for (let i = idx + direction; i >= 0 && i < goals.length; i += direction) {
     const g = goals[i];
@@ -107,12 +47,11 @@ export function GoalList() {
   const errors = validateGoals(state.goals);
   const errorsByGoalId = new Map(errors.map((e) => [e.goalId, e.message]));
 
-  // The 4★ per-banner cap is enforced by the Add form, not the validator, so a row's kind
-  // dropdown holds to it too: a kind is unavailable when the OTHER goals already fill it.
+  // Like the Add form, a row's kind dropdown disables a 4★ kind the OTHER goals already fill to the
+  // per-banner cap, so a kind change can't produce a list the validator would reject.
   function kindIsFull(kind: GoalKind, goalId: string): boolean {
-    if (kind !== '4star_character' && kind !== '4star_weapon') return false;
-    const banner = kind === '4star_character' ? 'character' : 'weapon';
-    return state.goals.filter((g) => g.kind === kind && g.id !== goalId).length >= MAX_TOTAL_FOUR_STAR_GOALS_PER_BANNER[banner];
+    if (!isFourStarKind(kind)) return false;
+    return state.goals.filter((g) => g.kind === kind && g.id !== goalId).length >= MAX_TOTAL_FOUR_STAR_GOALS_PER_BANNER[bannerOfKind(kind)];
   }
 
   function toggleCharacterAnchorGroup(goal: Goal, ids: string[]) {
@@ -125,8 +64,7 @@ export function GoalList() {
     } else {
       // maxAnchors counts PHASE-GROUPS, not raw ids — see GoalForm.tsx's
       // identically-motivated fix.
-      const selectedGroupCount = characterAnchorGroups.filter((g) => g.ids.every((id) => current.includes(id))).length;
-      next = selectedGroupCount + 1 > maxAnchors ? current : [...current, ...ids];
+      next = countSelectedGroups(characterAnchorGroups, current) + 1 > maxAnchors ? current : [...current, ...ids];
     }
     dispatch({ type: 'SET_GOAL_ANCHORS', id: goal.id, anchoredFiveStarGoalIds: next });
   }
@@ -174,19 +112,12 @@ export function GoalList() {
             <div className="goal-row-main">
               <GoalIcon kind={goal.kind} />
               <GoalNameInput name={goal.name} displayName={goalDisplayName(goal)} onCommit={(name) => dispatch({ type: 'EDIT_GOAL', id: goal.id, name })} />
-              {isFourStar(goal) && (
-                <select
-                  className="level-select"
-                  aria-label={goal.kind === '4star_character' ? 'Constellation to wait for' : 'Refinement to wait for'}
-                  value={goal.targetLevel ?? (goal.kind === '4star_weapon' ? 1 : 0)}
-                  onChange={(e) => dispatch({ type: 'SET_GOAL_TARGET_LEVEL', id: goal.id, targetLevel: Number(e.target.value) })}
-                >
-                  {(goal.kind === '4star_character' ? CHARACTER_LEVEL_OPTIONS : WEAPON_LEVEL_OPTIONS).map((lvl) => (
-                    <option key={lvl} value={lvl}>
-                      {goal.kind === '4star_character' ? `C${lvl}` : `R${lvl}`}
-                    </option>
-                  ))}
-                </select>
+              {isFourStarKind(goal.kind) && (
+                <LevelSelect
+                  kind={goal.kind}
+                  value={targetLevelOf(goal)}
+                  onChange={(targetLevel) => dispatch({ type: 'SET_GOAL_TARGET_LEVEL', id: goal.id, targetLevel })}
+                />
               )}
               <select
                 className="kind-select"
@@ -223,13 +154,12 @@ export function GoalList() {
                 {characterAnchorGroups.map((group) => {
                   const current = effectiveAnchorsFor(goal, characterAnchorGroups, fiveStarWeaponGoals);
                   const isSelected = group.ids.every((id) => current.includes(id));
-                  const selectedGroupCount = characterAnchorGroups.filter((g) => g.ids.every((id) => current.includes(id))).length;
                   // Structurally forced — see findFlankingLinkedPair's own doc
                   // comment (two simultaneous 5-stars flanking this goal leave
                   // no valid alternative). Locked checked, can't be unchecked.
                   const flanking = findFlankingLinkedPair(state.goals, goal.id);
                   const isForced = !!flanking && group.ids.includes(flanking[0]) && group.ids.includes(flanking[1]);
-                  const disabled = isForced || (!isSelected && selectedGroupCount + 1 > maxAnchorsFor(goal));
+                  const disabled = isForced || (!isSelected && countSelectedGroups(characterAnchorGroups, current) + 1 > maxAnchorsFor(goal));
                   return (
                     <label key={group.ids.join(',')} className="anchor-option">
                       <input

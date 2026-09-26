@@ -12,7 +12,8 @@ interface NumberFieldProps {
  * A number input that lets you freely clear and retype instead of snapping back to
  * the clamped value on every keystroke (the problem with a plain controlled
  * `<input type="number">`: clearing it briefly parses to 0, which a naive clamp
- * immediately re-renders back over whatever you were about to type). Invalid input
+ * immediately re-renders back over whatever you were about to type). Only whole
+ * numbers are accepted. Invalid input
  * is held as free text with an inline error until it resolves to a valid number, at
  * which point it's committed via onChange; blurring on an invalid value reverts to
  * the last committed value.
@@ -37,6 +38,12 @@ export function NumberField({ value, min, max, onChange, id }: NumberFieldProps)
     const n = Number(text);
     if (Number.isNaN(n)) {
       setError('Must be a number');
+      return;
+    }
+    // Every field is a count (pity, pulls, a percentage) — a fraction would be
+    // encoded into the engine's state codes as-is and silently corrupt the odds.
+    if (!Number.isInteger(n)) {
+      setError('Must be a whole number');
       return;
     }
     if (n < min) {

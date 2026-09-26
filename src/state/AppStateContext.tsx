@@ -1,7 +1,9 @@
-import { createContext, useContext, useMemo, useReducer, type ReactNode } from 'react';
+import { useMemo, useReducer, type ReactNode } from 'react';
 import { DEFAULT_CR_PARAMS } from '../engine/capturingRadiance';
+import { bannerOfKind, defaultTargetLevel, isFourStarKind } from '../engine/goalKinds';
 import { findFlankingLinkedPair } from '../engine/phases';
 import type { CharacterBannerState, CRHypothesisId, CRParams, Goal, GoalKind, WeaponBannerState } from '../engine/types';
+import { AppStateContext } from './useAppState';
 
 /**
  * Only `featured5StarId` survives as UI-configurable state — every other
@@ -18,11 +20,9 @@ export interface AppState {
   pullBudget: number;
   crModelId: CRHypothesisId;
   crParams: CRParams;
-  trialCount: number;
-  seed?: number;
 }
 
-export const initialAppState: AppState = {
+const initialAppState: AppState = {
   characterBanner: {
     state: { pity5: 0, guaranteed5: false, crCounter: 0, pity4: 0, guaranteed4: false },
     config: { featured5StarId: 'featured-5star' },
@@ -34,17 +34,14 @@ export const initialAppState: AppState = {
   pullBudget: 90,
   crModelId: 'A',
   crParams: DEFAULT_CR_PARAMS,
-  trialCount: 200_000,
 };
 
-type Action =
+export type Action =
   | { type: 'SET_CHAR_STATE'; patch: Partial<CharacterBannerState> }
   | { type: 'SET_WEAPON_STATE'; patch: Partial<WeaponBannerState> }
   | { type: 'SET_PULL_BUDGET'; value: number }
   | { type: 'SET_CR_MODEL'; value: CRHypothesisId }
   | { type: 'SET_CR_PARAMS'; patch: Partial<CRParams> }
-  | { type: 'SET_TRIAL_COUNT'; value: number }
-  | { type: 'SET_SEED'; value: number | undefined }
   | {
       type: 'ADD_GOAL';
       name: string;
@@ -83,19 +80,12 @@ function applySymmetricLink(goals: Goal[], field: 'linkedWeaponGoalId' | 'linked
   });
   if (!newPartnerId) return linked;
 
-  // Reconcile any 4-star goal whose own anchors are now stale against the
-  // newly-merged pair — found live: linking Odette+Miko left Alyosha's
-  // pre-existing `anchoredFiveStarGoalIds: [Odette.id]` (valid while they
-  // were separate, sequential phases) silently invalid the instant they
-  // became simultaneous, with a validation error but no fix applied
-  // automatically. Two triggers, both auto-extended to include BOTH ids
-  // (union with whatever she already has, never removing anything):
-  // (1) she's structurally FORCED onto this pair (findFlankingLinkedPair —
-  // see its own doc comment for why disconnection/partial-anchor becomes
-  // impossible), or (2) her EXISTING anchors already touch exactly one side
-  // of the pair (a stale partial match, regardless of her own position).
+  // Linking two 5★s can leave a 4★'s anchors stale (anchored to one side of what is now one
+  // simultaneous phase). Extend them to both sides — never removing any — when she sits between
+  // the pair (findFlankingLinkedPair: nothing else is valid there) or her anchors touch exactly
+  // one side.
   return linked.map((g) => {
-    if (g.kind !== '4star_character' && g.kind !== '4star_weapon') return g;
+    if (!isFourStarKind(g.kind)) return g;
     const flanking = findFlankingLinkedPair(linked, g.id);
     const isFlankedByThisPair = flanking && flanking.includes(actingId) && flanking.includes(newPartnerId);
     const anchors = g.anchoredFiveStarGoalIds;
@@ -118,10 +108,6 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, crModelId: action.value };
     case 'SET_CR_PARAMS':
       return { ...state, crParams: { ...state.crParams, ...action.patch } };
-    case 'SET_TRIAL_COUNT':
-      return { ...state, trialCount: action.value };
-    case 'SET_SEED':
-      return { ...state, seed: action.value };
     case 'ADD_GOAL': {
       const id = `goal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       // A goal's own id doubles as its "featured item" identity (see
@@ -131,7 +117,7 @@ function reducer(state: AppState, action: Action): AppState {
         id,
         name: action.name,
         kind: action.kind,
-        banner: action.kind === '5star_weapon' || action.kind === '4star_weapon' ? 'weapon' : 'character',
+        banner: bannerOfKind(action.kind),
         targetId: id,
         targetLevel: action.targetLevel,
         anchoredFiveStarGoalIds: action.anchoredFiveStarGoalIds,
@@ -189,8 +175,8 @@ function reducer(state: AppState, action: Action): AppState {
             ...g,
             name,
             kind,
-            banner: kind === '5star_weapon' || kind === '4star_weapon' ? ('weapon' as const) : ('character' as const),
-            targetLevel: kind === '4star_character' ? 0 : kind === '4star_weapon' ? 1 : undefined,
+            banner: bannerOfKind(kind),
+            targetLevel: isFourStarKind(kind) ? defaultTargetLevel(kind) : undefined,
             anchoredFiveStarGoalIds: undefined,
             linkedWeaponGoalId: undefined,
             linkedCharacterGoalId: undefined,
@@ -231,16 +217,8 @@ function reducer(state: AppState, action: Action): AppState {
   }
 }
 
-const AppStateContext = createContext<{ state: AppState; dispatch: React.Dispatch<Action> } | null>(null);
-
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialAppState);
   const value = useMemo(() => ({ state, dispatch }), [state]);
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
-}
-
-export function useAppState() {
-  const ctx = useContext(AppStateContext);
-  if (!ctx) throw new Error('useAppState must be used within an AppStateProvider');
-  return ctx;
 }
