@@ -243,7 +243,7 @@ describe('validateGoals', () => {
     // test the per-phase check in isolation. The maxActivePerPhase=5 logic stays
     // in goalValidation.ts (matches the real game's roster size, and would become
     // reachable again if the total cap is ever raised via a deeper architectural
-    // fix — see CLAUDE.md) but isn't independently testable through validateGoals
+    // fix — see CHANGELOG.md) but isn't independently testable through validateGoals
     // today. This test documents that reality directly, instead of asserting a
     // now-impossible-to-reach state.
     it('weapon: the total cap (4) fires before the per-phase cap (5) ever could, for any single-phase goal count', () => {

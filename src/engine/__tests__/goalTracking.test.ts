@@ -320,7 +320,7 @@ describe('4-star anchored to specific 5-star character goal(s) — per-phase clo
   // 5-star in the whole list, `anchoredFiveStarGoalIds: undefined` (never
   // touched) and an EXPLICIT `[]` (user actively unchecked the one available
   // box) used to be indistinguishable — both fell into the SAME "nothing to
-  // disconnect from, keep counting" fallback, since hasFourStarAnchorAmbiguity
+  // disconnect from, keep counting" fallback, since hasFourStarAnchorAmbiguity (now removed)
   // only ever treats 2+ candidates as real ambiguity. That made it impossible
   // to express "this 4-star is on a DIFFERENT, not-yet-added phase" without
   // adding a phantom placeholder 5-star just to create real ambiguity. Now

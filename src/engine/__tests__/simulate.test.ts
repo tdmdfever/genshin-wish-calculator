@@ -33,9 +33,9 @@ describe('closed-form sanity checks', () => {
     expect(cdf[90]).toBeCloseTo(1, 6);
   });
 
-  it('P(>=1 5-star within 80 pulls from pity 0) = 1 on the weapon banner', () => {
-    const cdf = exactWeaponBannerCdf(zeroWeaponState, weaponConfig, (o) => o.rarity === 5, 80);
-    expect(cdf[80]).toBeCloseTo(1, 6);
+  it('P(>=1 5-star within 77 pulls from pity 0) = 1 on the weapon banner', () => {
+    const cdf = exactWeaponBannerCdf(zeroWeaponState, weaponConfig, (o) => o.rarity === 5, 77);
+    expect(cdf[77]).toBeCloseTo(1, 6);
   });
 
   it('P(>=1 4-star-or-better within 10 pulls from pity 0) = 1', () => {
@@ -73,14 +73,14 @@ describe('closed-form sanity checks', () => {
     expect(cdf[180]).toBeCloseTo(1, 5);
   });
 
-  it('P(chosen path weapon within 160 pulls, fatePoints=0, from pity 0) = 1 (deterministic worst case)', () => {
+  it('P(chosen path weapon within 154 pulls, fatePoints=0, from pity 0) = 1 (deterministic worst case: two 77-pull cycles)', () => {
     const cdf = exactWeaponBannerCdf(
       zeroWeaponState,
       weaponConfig,
       (o) => o.rarity === 5 && o.kind === 'featured' && o.itemId === weaponConfig.chosenWeaponId,
-      160,
+      154,
     );
-    expect(cdf[160]).toBeCloseTo(1, 5);
+    expect(cdf[154]).toBeCloseTo(1, 5);
   });
 });
 

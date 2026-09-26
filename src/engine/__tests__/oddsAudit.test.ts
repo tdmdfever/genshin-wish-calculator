@@ -23,7 +23,7 @@ import type { CharacterBannerState, Goal, SimulationInput, WeaponBannerState } f
  *
  * Tolerances below are NOT arbitrary: scenarios involving deep cross-phase 4-star
  * copy tracking or non-zero starting pity/CR state across multiple same-banner
- * phases are subject to CLAUDE.md's already-documented, already-accepted
+ * phases are subject to CHANGELOG.md's already-documented, already-accepted
  * crCounter/persistent-vector time-marginalization residual (the "twelfth reported
  * bug" follow-up) — confirmed via direct inspection (2026-08-20) to be BOUNDED and
  * TRANSIENT (peaks mid-pull-range, decays back toward 0 as budget grows — S2's own
@@ -152,7 +152,7 @@ describe('odds audit: broad cross-validation sweep beyond the pinned regression 
     //
     // That's exactly the shape that hits the already-documented, already-
     // accepted crCounter/persistent-vector time-marginalization residual
-    // (CLAUDE.md's twelfth-reported-bug follow-up) — confirmed via direct
+    // (CHANGELOG.md's twelfth-reported-bug follow-up) — confirmed via direct
     // measurement (not assumed) to be the same bounded, transient class:
     // worst diff peaks at ~6.5pp around pull 210, then decays — 5.5pp@300,
     // 3.3pp@500, 1.1pp@700, 0.04pp@900. A wider tolerance here (not the

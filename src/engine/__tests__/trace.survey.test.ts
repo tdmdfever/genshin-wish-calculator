@@ -450,6 +450,14 @@ const scenarios: Scenario[] = [
       fiveStarWeapon('rw', 'RaidenWeapon', 'raiden-weapon-id', 'ow'),
     ],
     overrides: { pullBudget: 500 },
+    extraChecks: (run) => {
+      // The story this seed was picked for: RaidenWeapon drops during OdetteWeapon's own phase
+      // (after Odette, before OdetteWeapon is done), credited through the weapon link.
+      const rw = doneAt(run, 'rw');
+      expect(rw).toBeDefined();
+      expect(rw!).toBeGreaterThan(doneAt(run, 'o')!);
+      expect(rw!).toBeLessThan(doneAt(run, 'ow')!);
+    },
   },
 
   // ---- F: weapon 4-stars ----
@@ -540,7 +548,7 @@ const scenarios: Scenario[] = [
     overrides: {
       pullBudget: 150,
       characterBanner: { state: { ...zeroCharState, pity5: 89, guaranteed5: false }, featured5StarId: FEATURED_5STAR },
-      weaponBanner: { state: { ...zeroWeaponState, pity5: 79 } },
+      weaponBanner: { state: { ...zeroWeaponState, pity5: 76 } },
     },
   },
   {
@@ -583,7 +591,7 @@ describe('trace survey — optimal-pulling sanity sweep (v3)', () => {
       }
       // Every character-banner 5-star pull must carry a real pre->post CR
       // transition annotation — regression guard for the guaranteed-win
-      // mislabeling bug (CLAUDE.md's trace.ts crAnnotation history).
+      // mislabeling bug (CHANGELOG.md's trace.ts crAnnotation history).
       for (const step of run.steps) {
         if (step.banner === 'character' && step.outcomeLabel.startsWith('5★')) {
           expect(step.outcomeLabel).toMatch(/\[(50\/50|guaranteed win)/);

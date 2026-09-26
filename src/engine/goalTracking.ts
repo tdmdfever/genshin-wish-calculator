@@ -1,15 +1,16 @@
 import type { BannerKind, Goal, PullOutcome } from './types';
+import { copiesNeeded } from './goalKinds';
 
 /** Max total copies trackable: character C0-C6 = 7 copies, weapon R1-R5 = 5 copies. */
 export const MAX_CHARACTER_COPIES = 7;
 export const MAX_WEAPON_COPIES = 5;
 
 /**
- * Resets every phase: the shared FIFO counter (0..count) for THIS PHASE's own
- * 5star_character goals — matching over the character banner is identity-agnostic
- * (see the doc comment on this in CLAUDE.md / simulate.ts's goalMatchesOutcome), so
- * a second 5star_character goal represents a genuinely separate, later win, and the
- * earliest pending one always claims the next featured win.
+ * Resets every phase (except across a linked character window split by a detour — see
+ * exactEngine.ts's effectivePhaseGoals): the shared FIFO counter (0..count) for this phase's own
+ * 5star_character goals. Character matching is identity-agnostic (simulate.ts's
+ * goalMatchesOutcome), so a second 5star_character goal is a separate, later win, and the
+ * earliest pending one claims the next featured win.
  */
 export interface PhaseLocalSpec {
   fiveStarCharGoalIds: string[]; // priority order within the phase
@@ -47,10 +48,8 @@ export interface PersistentSpec {
   fiveStarWeaponTargetIds: string[]; // weapon banner only
   fourStarGoals: { goal: Goal; maxCopies: number }[];
   dims: number[];
-  // targetId -> index lookups, precomputed once per phase run instead of a linear
-  // scan on every hot-path call (fourStarIndex/fiveStarWeaponIndex are called once
-  // per matching pull outcome, for every active state on every pull — profiled as
-  // a measurable cost at this call volume).
+  // targetId -> index lookups, precomputed so the hot path (once per matching outcome, per
+  // active slice, per pull) doesn't scan.
   fiveStarWeaponIndexByTargetId: ReadonlyMap<string, number>;
   fourStarIndexByTargetId: ReadonlyMap<string, number>;
 }
@@ -110,18 +109,12 @@ export interface TrackingUpdateResult {
 }
 
 /**
- * Whether the NEXT pending 5star_character win in this phase (rank
- * phaseVector[0]+1) must be treated as a wasted/repeat win instead of actually
- * advancing the FIFO counter — true when some 4star_character goal is anchored
- * ONLY to already-claimed 5-star(s) in this phase (not also to the upcoming one)
- * and hasn't reached its own target yet. This models "you keep pulling on the
- * CURRENT patch's banner (any further featured win is just another copy of the
- * current 5-star) until the anchored 4-star's target is met, and only THEN does a
- * featured win start counting toward the next patch's 5-star" — without it, a
- * second featured win would be claimed by a later 5-star goal regardless of
- * whether an earlier-anchored 4-star's patch window has actually closed yet,
- * which would make anchoring-to-one-banner vs. anchoring-to-both indistinguishable
- * whenever both banners share a single phase.
+ * Whether the NEXT pending 5star_character win in this phase (rank phaseVector[0]+1) is instead
+ * a wasted/repeat win: true when some of this phase's 4star_character goals is anchored only to
+ * already-claimed 5★(s) here (not to the upcoming one) and hasn't reached its target. Models
+ * "keep pulling on the current patch's banner (a featured win is just another copy of the
+ * current 5★) until that 4★ is done, and only then does a win count toward the next patch" —
+ * without it, anchoring to one banner vs. both would be indistinguishable within a phase.
  */
 function isNextFiveStarClaimBlocked(
   phaseSpec: PhaseLocalSpec,
@@ -140,20 +133,10 @@ function isNextFiveStarClaimBlocked(
     if (!anchors || anchors.length === 0) continue;
     if (anchors.includes(nextGoalId)) continue; // stays open through the upcoming win too
 
-    // A 4-star's own textual phase can now differ from its resolved BLOCKING
-    // phase (see phases.ts's resolveFourStarBlockingPhase — the "4★ anchoring
-    // is phase-derived" fix) — so a 4-star can be textually present in THIS
-    // phase while every one of its anchors lives in a completely different,
-    // later phase (e.g. anchored ONLY to a sequential, unlinked 5-star that
-    // isn't in this phase's own roster at all). Such a goal has no stake in
-    // THIS phase's own same-phase FIFO focus and must never gate it — without
-    // this check, `allOtherAnchorsAlreadySettled` below vacuously treats
-    // "anchor not in this phase" as "already resolved" (correct for a
-    // multi-anchor goal that DOES have at least one anchor here), which
-    // wrongly makes a goal with ZERO anchors in this phase block it forever,
-    // since its own copy-count target can never be satisfied by pulls this
-    // phase's FIFO claim depends on. Mirrors isFourStarWindowOpenInPhase's own
-    // identical "none of its anchors are in this phase" early-out below.
+    // A 4★ can sit textually in this phase with every anchor in another phase (its blocking
+    // phase is elsewhere — phases.ts's resolveFourStarBlockingPhase). It has no stake in this
+    // phase's FIFO; without this early-out the check below would read "anchor not in this
+    // phase" as "already settled" and block the claim forever.
     const anchorRanksInPhase = anchors.map((a) => phaseSpec.fiveStarCharGoalIds.indexOf(a) + 1).filter((rank) => rank > 0);
     if (anchorRanksInPhase.length === 0) continue;
 
@@ -164,8 +147,7 @@ function isNextFiveStarClaimBlocked(
     if (!allOtherAnchorsAlreadySettled) continue;
 
     const idx = fourStarIndex(persistentSpec, fg.goal.targetId);
-    const targetLevel = fg.goal.targetLevel ?? 0;
-    if (idx !== -1 && persistentVector[idx] < targetLevel + 1) return true; // still waiting on this 4-star
+    if (idx !== -1 && persistentVector[idx] < copiesNeeded(fg.goal)) return true; // still waiting on this 4-star
   }
   return false;
 }
@@ -235,39 +217,16 @@ function isFourStarWindowOpenInPhase(
 }
 
 /**
- * Applies a pull outcome to both tracking vectors, returning new vectors (or the
- * same references if nothing changed).
+ * Applies a pull outcome to both tracking vectors, returning new vectors (or the same
+ * references if nothing changed).
  *
- * A 5star_character win is blocked from advancing the FIFO counter — treated as
- * just another win for whichever 5-star is currently "active" — by
- * isNextFiveStarClaimBlocked above; see its own doc comment for why this matters:
- * without it, anchoring a 4-star to one banner vs. both would be indistinguishable
- * whenever the 5-stars involved share a single phase.
- *
- * A same-phase-anchored 4-star's copy accrual is gated by
- * isFourStarWindowOpenInPhase (current patch focus must be one of its anchors) —
- * this is what makes a 4-star anchored to the phase's FIRST 5-star (open from
- * pull 1, closes once focus moves past it) distinguishable from one anchored to a
- * LATER same-phase 5-star (stays closed until focus actually reaches that patch).
- *
- * `closedGoalIds` names 4star_character/4star_weapon goals whose window is closed
- * FOR THIS PHASE specifically — computed once per phase in exactEngine.ts
- * (phases.ts's computeClosedFourStarGoalIdsForPhase) by comparing phase indices: a
- * 4-star's window closes once `p` falls outside the inclusive range spanned by its
- * anchors' own phases, whether `p` comes strictly AFTER every anchor (guaranteed
- * already resolved, since a phase can't graduate without its own goals — including
- * any anchor it contains — being satisfied) or strictly BEFORE every anchor (none
- * of them have happened yet, so this item structurally isn't in this phase's
- * real-world rate-up pool at all). This handles the CROSS-phase cases only (an
- * anchor in a different phase, separated by an intervening different-banner
- * phase) — a same-phase anchor's closing is handled live by
- * isFourStarWindowOpenInPhase above instead (character only — see its own doc
- * comment), since it depends on the current focus rank, not just "which phase are
- * we in."
- *
- * `closedFiveStarWeaponTargetIds` is the weapon-banner analogue for 5star_weapon
- * identity tracking (chosen vs. other-featured) — see
- * phases.ts's computeClosedFiveStarWeaponTargetIdsForPhase.
+ * - A featured 5★ character win advances the FIFO counter unless isNextFiveStarClaimBlocked.
+ * - A featured 4★ copy counts unless the goal is in `closedGoalIds` (its window is closed for
+ *   this whole phase — phases.ts's computeClosedFourStarGoalIdsForPhase, the cross-phase rule)
+ *   or isFourStarWindowOpenInPhase says focus isn't on one of its anchors yet (the live,
+ *   within-phase rule).
+ * - A 5★ weapon marks its goal obtained unless its target is in `closedFiveStarWeaponTargetIds`
+ *   (not this phase's weapon banner — phases.ts's computeClosedFiveStarWeaponTargetIdsForPhase).
  */
 export function updateGoalTracking(
   phaseSpec: PhaseLocalSpec,
@@ -292,14 +251,8 @@ export function updateGoalTracking(
   }
 
   if (outcome.rarity === 5 && (outcome.kind === 'featured' || outcome.kind === 'featured_other')) {
-    // Weapon-banner identity-specific 5-star tracking (chosen vs. other featured).
-    // On the character banner this is a no-op: fiveStarWeaponTargetIds is always
-    // empty there, so idx is always -1. closedFiveStarWeaponTargetIds excludes
-    // every phase but this target's own natal phase (see
-    // phases.ts's computeClosedFiveStarWeaponTargetIdsForPhase) — without it, a
-    // LATER phase's featured weapon (baked into the one static WeaponBannerConfig
-    // reused across every weapon-banner phase) was winnable during an EARLIER,
-    // unrelated weapon-banner phase.
+    // Weapon-banner identity tracking (chosen vs. other featured). A no-op on the character
+    // banner, where fiveStarWeaponTargetIds is empty so idx is always -1.
     if (closedFiveStarWeaponTargetIds.has(outcome.itemId)) return { phaseVector, persistentVector };
     const idx = fiveStarWeaponIndex(persistentSpec, outcome.itemId);
     if (idx !== -1 && persistentVector[idx] === 0) {
@@ -313,9 +266,7 @@ export function updateGoalTracking(
   if (outcome.rarity === 4 && outcome.kind === 'featured') {
     const idx = fourStarIndex(persistentSpec, outcome.itemId);
     if (idx !== -1) {
-      // idx = fiveStarWeaponTargetIds.length + offset into fourStarGoals (see
-      // buildPersistentSpec) -- reuse it directly instead of re-scanning for the
-      // entry by targetId, which fourStarIndex() already just resolved.
+      // idx = fiveStarWeaponTargetIds.length + offset into fourStarGoals (buildPersistentSpec).
       const fourStarEntry = persistentSpec.fourStarGoals[idx - persistentSpec.fiveStarWeaponTargetIds.length];
       if (closedGoalIds.has(fourStarEntry.goal.id)) return { phaseVector, persistentVector };
       if (!isFourStarWindowOpenInPhase(phaseSpec, persistentSpec, phaseVector, persistentVector, fourStarEntry.goal)) {
@@ -352,15 +303,10 @@ export function isGoalDone(
       const idx = fiveStarWeaponIndex(persistentSpec, goal.targetId);
       return idx !== -1 && persistentVector[idx] === 1;
     }
-    case '4star_character': {
-      const idx = fourStarIndex(persistentSpec, goal.targetId);
-      const targetLevel = goal.targetLevel ?? 0; // C0 default
-      return idx !== -1 && persistentVector[idx] >= targetLevel + 1;
-    }
+    case '4star_character':
     case '4star_weapon': {
       const idx = fourStarIndex(persistentSpec, goal.targetId);
-      const targetLevel = goal.targetLevel ?? 1; // R1 default
-      return idx !== -1 && persistentVector[idx] >= targetLevel;
+      return idx !== -1 && persistentVector[idx] >= copiesNeeded(goal);
     }
     default:
       return false;

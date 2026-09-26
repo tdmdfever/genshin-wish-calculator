@@ -14,7 +14,7 @@ function sumProb(transitions: { probability: number }[]): number {
 
 describe('transitionWeaponBanner', () => {
   it('probabilities sum to 1 across a swept range of states', () => {
-    for (const pity5 of [0, 10, 62, 63, 78, 79]) {
+    for (const pity5 of [0, 10, 62, 63, 75, 76]) {
       for (const guaranteed5 of [false, true]) {
         for (const fatePoints of [0, 1] as const) {
           for (const pity4 of [0, 4, 8, 9]) {
@@ -29,8 +29,8 @@ describe('transitionWeaponBanner', () => {
     }
   });
 
-  it('hard-pity state (pity5=79) has 5-star probability exactly 1', () => {
-    const state: WeaponBannerState = { pity5: 79, guaranteed5: false, fatePoints: 0, pity4: 0, guaranteed4: false };
+  it('hard-pity state (pity5=76) has 5-star probability exactly 1', () => {
+    const state: WeaponBannerState = { pity5: 76, guaranteed5: false, fatePoints: 0, pity4: 0, guaranteed4: false };
     const transitions = transitionWeaponBanner(state, config);
     const p5 = transitions.filter((t) => t.outcome.rarity === 5).reduce((s, t) => s + t.probability, 0);
     expect(p5).toBeCloseTo(1);
@@ -38,7 +38,7 @@ describe('transitionWeaponBanner', () => {
 
   it('fatePoints=1 forces 100% chosen weapon on a 5-star, regardless of guaranteed5 — a fate point fully overrides the 75/25 guarantee, not just the identity split within it', () => {
     for (const guaranteed5 of [false, true]) {
-      const state: WeaponBannerState = { pity5: 79, guaranteed5, fatePoints: 1, pity4: 0, guaranteed4: false };
+      const state: WeaponBannerState = { pity5: 76, guaranteed5, fatePoints: 1, pity4: 0, guaranteed4: false };
       const transitions = transitionWeaponBanner(state, config);
       const chosen = transitions.find((t) => t.outcome.rarity === 5 && t.outcome.kind === 'featured');
       expect(chosen?.probability).toBeCloseTo(1);
@@ -50,7 +50,7 @@ describe('transitionWeaponBanner', () => {
   });
 
   it('baseline (guaranteed5=false, fatePoints=0): splits 5-star 37.5/37.5/25 between chosen/other/standard', () => {
-    const state: WeaponBannerState = { pity5: 79, guaranteed5: false, fatePoints: 0, pity4: 0, guaranteed4: false };
+    const state: WeaponBannerState = { pity5: 76, guaranteed5: false, fatePoints: 0, pity4: 0, guaranteed4: false };
     const transitions = transitionWeaponBanner(state, config);
     const chosen = transitions.find((t) => t.outcome.rarity === 5 && t.outcome.kind === 'featured');
     const other = transitions.find((t) => t.outcome.rarity === 5 && t.outcome.kind === 'featured_other');
@@ -72,7 +72,7 @@ describe('transitionWeaponBanner', () => {
   });
 
   it('guaranteed5=true, fatePoints=0: 50/50 between chosen/other, no standard possible — the standalone 75/25 guarantee acting on its own', () => {
-    const state: WeaponBannerState = { pity5: 79, guaranteed5: true, fatePoints: 0, pity4: 0, guaranteed4: false };
+    const state: WeaponBannerState = { pity5: 76, guaranteed5: true, fatePoints: 0, pity4: 0, guaranteed4: false };
     const transitions = transitionWeaponBanner(state, config);
     const chosen = transitions.find((t) => t.outcome.rarity === 5 && t.outcome.kind === 'featured');
     const other = transitions.find((t) => t.outcome.rarity === 5 && t.outcome.kind === 'featured_other');

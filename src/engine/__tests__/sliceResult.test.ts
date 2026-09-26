@@ -66,14 +66,15 @@ function worstSliceDiscrepancy(largeInput: SimulationInput, smallBudget: number)
 }
 
 describe('sliceSimulationResult', () => {
-  describe('exact (byte-identical) when no 4-star goal exists on any banner', () => {
-    // A "trailing continuation" phase (exactEngine.ts's "Phase C") is
-    // constructed whenever the tail banner has ANY 4-star goal — and that
-    // phase IS a same-banner reuse of the main phase (see the next describe
-    // block), even for an otherwise single-phase goal list. So byte-identical
-    // slicing only holds unconditionally when there's no 4-star goal at all
-    // (no Phase C ever gets built) — found directly by this test failing
-    // first, not assumed going in.
+  describe('exact (byte-identical) when no banner is reused across phases', () => {
+    // The trailing continuation runs inside the last phase's own DP (no hand-off), so a 4★ on a
+    // single-phase list no longer breaks exactness — it used to, as a separate phase seeded from
+    // the normalized exit distribution.
+    it('single phase plus an anchored 4-star, breakdowns included', () => {
+      const input = baseInput({ pullBudget: 200, goals: [fiveStarChar('o', 'Odette'), fourStarChar('a', 'Alyosha', 2, ['o'])] });
+      expectSliceMatchesFreshExactly(input, 90);
+    });
+
     it('single 5-star goal, no 4-stars at all', () => {
       const input = baseInput({ pullBudget: 200, goals: [fiveStarChar('o', 'Odette')] });
       expectSliceMatchesFreshExactly(input, 90);
@@ -90,12 +91,7 @@ describe('sliceSimulationResult', () => {
     });
   });
 
-  describe('bounded (small, nonzero) discrepancy whenever a 4-star goal exists (Phase C) or a banner is otherwise reused', () => {
-    it('single phase plus an anchored 4-star (Phase C is itself a same-banner reuse): discrepancy is floating-point-noise-sized', () => {
-      const input = baseInput({ pullBudget: 200, goals: [fiveStarChar('o', 'Odette'), fourStarChar('a', 'Alyosha', 2, ['o'])] });
-      expect(worstSliceDiscrepancy(input, 90)).toBeLessThan(1e-9);
-    });
-
+  describe('bounded (small, nonzero) discrepancy whenever a banner is reused across phases', () => {
     it('character banner reused (character -> weapon -> character), no 4-stars: discrepancy is negligible', () => {
       const input = baseInput({
         pullBudget: 300,

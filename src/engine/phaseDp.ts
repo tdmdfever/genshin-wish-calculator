@@ -23,91 +23,68 @@ import type {
 
 export interface PhaseDpResult {
   /**
-   * Total (unnormalized) probability mass that fully completes this phase within
-   * maxPulls, broken down by (banner substate, persistent tracking vector,
-   * phase-local FIFO vector) it ends in — key =
-   * (bannerCode * persistentModulus + persistentCode) * phaseModulus + phaseCode,
-   * where persistentModulus = product of persistentSpec.dims and phaseModulus =
-   * product of THIS phase's own phaseSpec.dims (built from whatever `phaseGoals`
-   * this call was given — see exactEngine.ts's `effectivePhaseGoals`). Used to
-   * seed a later phase that reuses this same banner (normalize by dividing by
-   * the sum of this map's values) — persistentSpec is identical across every
-   * phase of a banner (built once from the whole goal list), so that component
-   * of the key is always directly reusable there; the phaseCode component is
-   * only meaningfully reusable when the NEXT phase was built from the exact
-   * same `phaseGoals` (a linked-simultaneous character window spanning both —
-   * see phases.ts's `computeCharacterWindowGoalsForPhase`), which is why
-   * exactEngine.ts decodes-and-resets it back to 0 for every ordinary
-   * (non-window) same-banner reoccurrence instead of passing it through
-   * unchanged — twenty-first reported bug (2026-08-30), see this file's own
-   * doc comment on the startDist-ingestion loop below for the full story.
+   * Total (unnormalized) mass that graduates within maxPulls, keyed by
+   * `(bannerCode * persistentModulus + persistentCode) * phaseModulus + phaseCode` (moduli = products
+   * of the persistent / this phase's own phase-local dims). Normalized, it seeds the banner's next
+   * phase. The persistent spec is shared by all of a banner's phases, so persistentCode carries over
+   * as-is; phaseCode only means something to a next phase built from the same `phaseGoals` (a linked
+   * character window split by a detour), so exactEngine.ts resets it otherwise.
    */
-  exitSubstateDist: Map<number, number>;
-  /** localPrefixDone[k][l] = P(first k+1 phase goals done by local pull l | just entered phase at l=0), k=0..phaseGoals.length-1.
-   *
-   * NOTE (2026-08-19, the "4★ anchoring is phase-derived" fix): this is NO LONGER
-   * simply `blockingPrefixDone` repeated for every k — a phaseGoals member can now
-   * be a non-blocking 4★ (its own graduation-gating phase, per
-   * phases.ts's resolveFourStarBlockingPhase, differs from this phase), in which
-   * case this phase's own graduation doesn't guarantee it's done. Computed via a
-   * genuine joint per-k streak (see recordGraduated's `graduatedPrefixMassAtStreak`)
-   * so it's still exact WITHIN this one phase — for a k whose phaseGoals[k] IS a
-   * blocking member, this equals the OLD blanket-`graduatedTotal` behavior exactly;
-   * for a non-blocking k, it correctly comes out smaller. exactEngine.ts bridges
-   * the remainder for non-blocking k's using `accumulatedLevelCounts` (see its own
-   * comment on this). */
-  localPrefixDone: Float64Array[];
-  /** graduatedPrefixDone[k][l] = the GRADUATED-ONLY component of
-   * localPrefixDone[k][l] (excludes mass still ACTIVE, i.e. this phase's own
-   * blockingGoals condition not yet met) — exactEngine.ts uses this to
-   * separate "phaseGoals[k] done AND this phase's blocking condition ALREADY
-   * met" from "...done but still active," needed to correctly bridge a
-   * non-blocking goal's own resolution through LATER phases (see
-   * exactEngine.ts's side-track mechanism) without conflating the two. */
-  graduatedPrefixDone: Float64Array[];
-  /** blockingPrefixDone[l] = P(this phase's own GRADUATION condition — i.e.
-   * blockingGoals, not phaseGoals — met by local pull l). This, not
-   * `localPrefixDone[phaseGoals.length-1]`, is what drives exitSubstateDist's
-   * timing and therefore the NEXT phase's arrivalDensity in exactEngine.ts — see
-   * the 2026-08-19 fix's doc comment above for why those two are no longer
-   * guaranteed to coincide. */
-  blockingPrefixDone: Float64Array;
+    exitSubstateDist: Map<number, number>;
   /**
-   * activeLevelCounts[fourStarIdx][level][l] / graduatedLevelCounts[fourStarIdx][level][l]
-   * = P(that 4-star goal — indexed against persistentSpec.fourStarGoals, i.e. EVERY
-   * 4-star goal on this banner, not just this phase's own — has reached level+1
-   * total copies by local pull l), split by whether that probability mass is still
-   * ACTIVE within this phase (hasn't satisfied phase.goals yet) or has already
-   * GRADUATED out of it (phase.goals satisfied, mass frozen at graduation).
-   *
-   * Kept SEPARATE (rather than summed into one array, as an earlier version did)
-   * because exactEngine.ts needs to combine them differently across phases of the
-   * same banner: active contributions from EVERY phase must be summed (that mass
-   * hasn't left this banner yet), but only the LAST phase's graduated contribution
-   * should be added — an earlier (non-last) phase's graduated mass flows into a
-   * later phase via exitSubstateDist and gets tracked as THAT phase's own active
-   * mass, so re-adding it here would double-count it. Reporting only the SUM here
-   * previously made a goal's breakdown silently require "reached its own phase" as
-   * a hidden prerequisite, undercounting mass still active in an earlier phase of
-   * the same banner.
+   * localPrefixDone[k][l] = P(phaseGoals[0..k] all done by local pull l | entered at l=0). Not simply
+   * blockingPrefixDone: a phaseGoals member can be a non-blocking 4★ (it blocks a later phase), so
+   * graduating doesn't imply it's done. Computed from each mass's joint prefix streak, so it's exact
+   * within the phase; exactEngine.ts bridges a non-blocking goal's later resolution.
    */
-  activeLevelCounts: Float64Array[][];
+    localPrefixDone: Float64Array[];
+  /** The graduated-only part of localPrefixDone — exactEngine.ts's side-track needs "done and
+   * graduated" apart from "done but still active". */
+    graduatedPrefixDone: Float64Array[];
+  /** blockingPrefixDone[l] = P(this phase's graduation condition — `blockingGoals`, not
+   * `phaseGoals` — met by local pull l). Drives exitSubstateDist's timing and so the next phase's
+   * arrival in exactEngine.ts. */
+    blockingPrefixDone: Float64Array;
+  /**
+   * activeLevelCounts[fi][level][l] / graduatedLevelCounts[fi][level][l] = P(4★ `fi` — indexed like
+   * persistentSpec.fourStarGoals, i.e. every 4★ on the banner — has >= level+1 copies by local pull
+   * l), split by whether that mass is still active in this phase or has graduated (frozen at
+   * graduation). Kept apart because exactEngine.ts combines them differently across a banner's
+   * phases: every phase's active mass counts, but a non-last phase's graduated mass continues into
+   * the next phase via exitSubstateDist (and is counted there), so it's only bridged while in transit.
+   */
+    activeLevelCounts: Float64Array[][];
   graduatedLevelCounts: Float64Array[][];
+  /** Only with a `continuation`: continuationLevelCounts[fi][level][l] = P(4★ `fi` has >= level+1
+   * copies by local pull l) over mass that has graduated and kept pulling in the continuation —
+   * i.e. graduatedLevelCounts, but with those copies still growing after graduation. */
+  continuationLevelCounts?: Float64Array[][];
+}
+
+/**
+ * The trailing continuation, run inside the last real phase's own DP (see exactEngine.ts): once
+ * mass graduates, a real player keeps pulling on this banner, so 4★s on this roster keep collecting
+ * copies past their targets. Running it here, rather than as a separate phase seeded from the
+ * normalized exit distribution, keeps each graduate's copies tied to when it graduated — the
+ * averaged hand-off put a 5-10pp error into the levels above a target.
+ */
+export interface ContinuationSpec {
+  characterConfig: CharacterBannerConfig;
+  weaponConfig: WeaponBannerConfig;
+  /** 4★s not on the roster (the last phase's own closed set). */
+  closedGoalIds: ReadonlySet<string>;
+  /** Continuation mass stops pulling after this local pull (MAX_CONTINUATION_HORIZON_PULLS): past
+   * it the curves plateau, which bounds the cost for large budgets. */
+  horizon: number;
 }
 
 interface CachedTransition {
   probability: number;
   outcome: PullOutcome;
   nextBannerCode: number;
-  /** Precomputed once per bannerCode (not per pull, not per slice) — an index into
-   * the fixed, small `outcomeShapes` array (via `outcomeKeyToIndex`), not a string
-   * key. This is looked up in the innermost per-(bannerCode, transition) loop —
-   * tens of thousands of times per slice per pull — so a plain array index beats a
-   * string-keyed Map.get there; profiling showed the string lookup and the old
-   * eager `SliceMap` totalMass bookkeeping (see below) as the two dominant costs
-   * once the goal-tracking re-derivation itself was already eliminated by the
-   * slice restructuring. */
-  outcomeIndex: number;
+  /** Index into `outcomeShapes`, resolved once per bannerCode — the innermost loop reads it, where
+   * an array index beats a string-keyed Map. */
+    outcomeIndex: number;
 }
 
 interface BannerAdapter {
@@ -115,22 +92,12 @@ interface BannerAdapter {
   getTransitions(bannerCode: number): CachedTransition[];
 }
 
-/** A stable string key for a PullOutcome's SHAPE (rarity + kind + itemId if any) —
- * used to look up a slice-local, bannerCode-independent goal-tracking result (see
- * runPhaseDp's doc comment on the slice restructuring) without re-deriving it.
- *
- * A rarity-5 featured/featured_other outcome is canonicalized by `itemId` ALONE,
- * dropping `kind` — needed for the weapon banner's dual-adapter Epitomized Path
- * retarget (see runPhaseDp's doc comment): once a phase's first 5star_weapon goal
- * is claimed, a second adapter swaps which physical weapon is "chosen" vs
- * "other-featured", so the SAME physical item can arrive labeled either way
- * depending on which adapter produced it. `updateGoalTracking`'s own
- * 5star_weapon branch already treats `'featured'`/`'featured_other'` identically
- * (it keys purely on `itemId`), so this loses no real distinction — it just makes
- * the precomputed per-slice goal-tracking result (`perOutcome`) valid regardless
- * of which adapter is active for a given slice. Safe unconditionally (not just
- * when a swap is in play): the character banner's one such slot, and a weapon
- * banner's (at most) two, are already uniquely identified by itemId alone. */
+/**
+ * A stable key for a PullOutcome's shape (rarity + kind + itemId). Featured / featured_other 5★s
+ * are keyed by itemId alone: the Epitomized Path retarget adapter swaps which weapon is "chosen",
+ * so the same physical weapon can arrive labelled either way, and updateGoalTracking only looks at
+ * itemId there. Both adapters therefore share one outcome index space.
+ */
 function outcomeKey(outcome: PullOutcome): string {
   if (outcome.rarity === 3) return '3';
   if (outcome.rarity === 5 && outcome.kind !== 'standard') return `5f|${outcome.itemId}`;
@@ -139,12 +106,9 @@ function outcomeKey(outcome: PullOutcome): string {
 }
 
 /**
- * Every distinct PullOutcome SHAPE a banner can ever produce, derived directly
- * from its config — independent of any specific bannerCode's state (which only
- * affects each shape's PROBABILITY and next-state, never which shapes exist at
- * all). This is the fixed, small (~4-8 entries) set the slice-based DP precomputes
- * a goal-tracking result for once per slice per pull, instead of once per
- * (bannerCode, slice) pair — see runPhaseDp's doc comment.
+ * Every outcome shape a banner config can produce. Independent of bannerCode, which only changes
+ * each shape's probability and next state — the small fixed set (~4-8) the DP computes goal
+ * tracking for, once per slice per pull.
  */
 function enumerateOutcomeShapes(banner: BannerKind, characterConfig: CharacterBannerConfig, weaponConfig: WeaponBannerConfig): PullOutcome[] {
   if (banner === 'character') {
@@ -169,16 +133,8 @@ function enumerateOutcomeShapes(banner: BannerKind, characterConfig: CharacterBa
 }
 
 /**
- * `getTransitions(bannerCode)` is a pure function of `bannerCode` alone (given a
- * fixed config/crModel/crParams for this whole phase run), but the DP loop visits
- * it far more than once per distinct bannerCode (the banner substate space is
- * bounded to a few thousand values; the persistent/phase dimensions multiply on
- * top of that per visit). Caching by bannerCode is pure memoization of a pure
- * function — zero behavior change, just avoids redundant recomputation. Each
- * cached transition also carries a precomputed `outcomeIndex` (an index into
- * `outcomeShapes`, via `outcomeKeyToIndex` — see `outcomeKey()` above), so the
- * slice-based main loop never needs to re-derive or look it up by string per
- * visit either.
+ * Transitions per bannerCode (a pure function of it, for this phase's fixed config), memoized in
+ * a dense array indexed by bannerCode, each carrying its next bannerCode and outcome index.
  */
 function makeBannerAdapter(
   banner: BannerKind,
@@ -188,10 +144,6 @@ function makeBannerAdapter(
   crParams: CRParams,
   outcomeKeyToIndex: ReadonlyMap<string, number>,
 ): BannerAdapter {
-  // A plain array indexed directly by bannerCode (a bounded integer, 0..bannerModulus-1)
-  // beats a Map here — this is looked up once per active bannerCode per slice per
-  // pull (up to bannerModulus times), so avoiding hash/collision overhead on every
-  // call is worth the small fixed upfront allocation.
   if (banner === 'character') {
     const cache: (CachedTransition[] | undefined)[] = new Array(CHAR_BANNER_MODULUS);
     return {
@@ -230,25 +182,14 @@ function makeBannerAdapter(
   };
 }
 
-/** One (persistentCode, phaseCode) "slice"'s precomputed, bannerCode-independent
- * result for a single outcome shape — see runPhaseDp's doc comment. The "not
- * done" variant carries a DIRECT REFERENCE to its destination slice's dense
- * array (`destArray`), resolved once per outcome per slice (not once per
- * bannerCode) — since `newSliceKey` never varies with `bannerCode`, the innermost
- * per-(bannerCode, transition) loop can write straight into `destArray` with a
- * plain index instead of calling `SliceMap.add()` (a `Map.get` per call) tens of
- * thousands of times per slice per pull. */
+/** One slice's goal-tracking result for one outcome shape. The not-done variant holds its
+ * destination slice's dense array, so the innermost loop writes to it by plain index. */
 type SliceOutcomeResult =
-  | { done: true; newPersistentCode: number; newPhaseCode: number; copiesPerFourStar: number[]; prefixStreak: number }
+  | { done: true; newPersistentCode: number; newPhaseCode: number; copiesPerFourStar: number[]; prefixStreak: number; contDest: Float64Array | undefined }
   | { done: false; newSliceKey: number; destArray: Float64Array };
 
-/** dense[bannerCode] = probability mass, for one (persistentCode, phaseCode)
- * slice. Sized to the banner's full state-space modulus, which is small (a few
- * thousand) and — per profiling — genuinely dense enough (tens of percent full by
- * the end of a typical run) that a flat array beats a sparse Map here, both for
- * lookup speed and for iteration. Memory stays bounded because the outer
- * structure only allocates one of these per DISTINCT slice actually reached, not
- * per every theoretically-possible (persistentCode, phaseCode) combination. */
+/** dense[bannerCode] = mass, per (persistentCode, phaseCode) slice. Dense because slices are
+ * tens of percent full by the end of a run; only slices actually reached are allocated. */
 class SliceMap {
   readonly arrays = new Map<number, Float64Array>();
   private readonly bannerModulus: number;
@@ -257,10 +198,8 @@ class SliceMap {
     this.bannerModulus = bannerModulus;
   }
 
-  /** Returns (creating if needed) the dense array for a slice — used both by
-   * `add()` and by callers that want to resolve a destination array ONCE (e.g.
-   * per outcome per slice) rather than once per bannerCode. */
-  getOrCreateArray(sliceKey: number): Float64Array {
+  /** The dense array for a slice, created on first use. */
+    getOrCreateArray(sliceKey: number): Float64Array {
     let arr = this.arrays.get(sliceKey);
     if (!arr) {
       arr = new Float64Array(this.bannerModulus);
@@ -274,13 +213,8 @@ class SliceMap {
   }
 }
 
-/** Total mass in a slice's dense array — computed lazily (only where actually
- * needed, once per slice per pull) rather than tracked eagerly on every `add()`
- * call. Profiling found the eager version (a `Map<number,number>` get+set on
- * every single elementary transition — tens of thousands of times per slice per
- * pull) was one of the two dominant costs in this function; a tight numeric
- * reduce over the (already cache-resident) Float64Array, called far less often,
- * is both simpler and substantially faster. */
+/** Total mass in a slice, summed when needed (once per slice per pull) — tracking it on every add
+ * was one of the DP's two dominant costs. */
 function sumMass(arr: Float64Array): number {
   let total = 0;
   for (let i = 0; i < arr.length; i++) total += arr[i];
@@ -288,52 +222,21 @@ function sumMass(arr: Float64Array): number {
 }
 
 /**
- * Runs the exact DP for one phase (a maximal run of consecutive same-banner
- * goals), starting from a NORMALIZED (sums to ~1) distribution over (banner
- * substate, persistent tracking vector) representing "just entered this phase".
- * Tracks three things jointly: the banner's own pity/CR/fate state, a phase-local
- * 5-star-character FIFO counter (resets every phase — see goalTracking.ts), and a
- * persistent tracking vector covering every 4-star and 5-star-weapon goal on this
- * banner from the WHOLE goal list (carries across phases — see PersistentSpec's
- * doc comment for why: those items can be opportunistically obtained on any pull
- * of this banner, not just once their own priority slot's phase is reached).
- * Probability mass that satisfies every phase goal "graduates" out of the active
- * pool into exitSubstateDist and stops evolving THIS phase's own DP (no more pulls
- * happen on a banner once it's no longer in focus) — but its persistent vector
- * keeps evolving normally if/when this banner is used again in a later phase. See
- * exactEngine.ts for how phases are stitched together across the whole goal list.
+ * The exact DP for one phase, from a normalized distribution over (banner substate, persistent
+ * tracking vector, phase-local FIFO vector) at entry. Tracks jointly the banner's pity/CR/fate
+ * state, the phase-local 5★ character FIFO counter, and the banner-wide persistent vector (4★
+ * copies, 5★ weapon flags — goalTracking.ts's PersistentSpec). Mass that satisfies
+ * `blockingGoals` graduates into exitSubstateDist and stops pulling in this phase.
  *
- * STRUCTURE: state is organized into "slices" — one per distinct (persistentCode,
- * phaseCode) pair reached — each holding a dense array of probability mass indexed
- * by bannerCode. This isn't just a data-structure swap: the goal-tracking side of
- * a pull (updateGoalTracking/isGoalDone/isPhaseFullyDone and the anchor-gating
- * helpers they call) depends ONLY on (persistentCode, phaseCode, which outcome
- * shape occurred) — never on bannerCode. The banner-transition side
- * (getTransitions) depends ONLY on bannerCode. Before this restructuring, every
- * (bannerCode, persistentCode, phaseCode) combination re-derived the goal-tracking
- * result from scratch — profiled as the majority of this function's cost, since
- * the banner substate space (thousands of values) makes that re-derivation happen
- * thousands of times more often than the handful of distinct results it could ever
- * produce. Now it's computed once per (slice, outcome shape) pair — a fixed, small
- * set — and the inner sweep over bannerCode just looks up the precomputed result
- * and does array arithmetic, no decode/encode/allocation per bannerCode at all.
+ * State is grouped into slices — one dense Float64Array over bannerCode per distinct
+ * (persistentCode, phaseCode) — because the two halves of a pull are independent: the banner
+ * transition depends only on bannerCode, and goal tracking only on the slice and the outcome
+ * shape. So tracking is computed once per (slice, outcome shape) per pull, and the sweep over
+ * bannerCodes is pure array arithmetic. This is the engine's main performance lever.
  *
- * `weaponConfigAfterFirstClaimed` (weapon banner only, optional): when a phase has
- * TWO `5star_weapon` goals, a rational player retargets their Epitomized Path
- * selection to the second one the instant the first is claimed — the fourteenth
- * reported bug was that `weaponConfig`'s chosen/other identity used to be static
- * for the whole phase, so a Fate Point could never benefit the second weapon.
- * Fixed by building a SECOND `BannerAdapter` from the swapped config and choosing
- * which one to use PER SLICE (not once for the whole run), based on whether that
- * slice's own persistent vector already shows the phase's first weapon goal's
- * `targetId` as obtained — this is read directly off `persistentVector`, already
- * decoded once per slice per pull for goal-tracking, so the check is free. Made
- * possible entirely by `outcomeKey()`'s itemId-only canonicalization above: both
- * adapters' transitions resolve into the SAME `outcomeKeyToIndex` space (built
- * once, from `weaponConfig` alone), so `perOutcome` doesn't need to double either
- * — the goal-tracking result for "you got physical weapon X" is identical
- * regardless of which adapter currently labels X as `'featured'` vs
- * `'featured_other'`.
+ * `weaponConfigAfterFirstClaimed` (two-weapon window only): the Epitomized Path retarget — a
+ * second adapter built from the swapped config serves every slice whose persistent vector already
+ * shows the first weapon obtained.
  */
 export function runPhaseDp(
   banner: BannerKind,
@@ -348,20 +251,13 @@ export function runPhaseDp(
   closedGoalIds: ReadonlySet<string>,
   closedFiveStarWeaponTargetIds: ReadonlySet<string>,
   weaponConfigAfterFirstClaimed: WeaponBannerConfig | undefined,
-  /** The goals that actually gate THIS phase's own graduation (moving mass from
-   * `active` to `exitSubstateDist`) — see phases.ts's
-   * computeBlockingFourStarGoalIdsForPhase. Required, not defaulted to
-   * `phaseGoals` — this function has exactly one caller (exactEngine.ts), which
-   * always computes and passes the real blocking set; a default here would be
-   * unreachable in practice but would silently reintroduce pre-seventeenth-bug
-   * ("every phase member blocks") behavior for any future caller that omitted
-   * it by mistake, rather than failing to compile. Can legally include a goal
-   * that ISN'T in `phaseGoals` at all — a 4★ whose own textual phase is
-   * EARLIER than its resolved blocking phase (see phases.ts's
-   * resolveFourStarBlockingPhase) — which works because isGoalDone for a 4★ only
-   * ever reads `persistentVector` (tracked banner-wide, not phase-scoped), never
-   * `phaseVector`/`phaseSpec`. */
-  blockingGoals: Goal[],
+  /** The goals gating this phase's graduation: its own 5★ goals plus the 4★s that block it
+   * (phases.ts's computeBlockingFourStarGoalIdsForPhase). Required rather than defaulting to
+   * `phaseGoals`, so a new caller can't silently get "every member blocks". May include a 4★ that
+   * isn't in `phaseGoals` (its natal phase is earlier) — a 4★'s isGoalDone only reads the
+   * persistent vector. */
+    blockingGoals: Goal[],
+  continuation?: ContinuationSpec,
 ): PhaseDpResult {
   const phaseSpec = buildPhaseLocalSpec(phaseGoals);
   const phaseModulus = phaseSpec.dims.reduce((a, b) => a * b, 1) || 1;
@@ -377,31 +273,22 @@ export function runPhaseDp(
   const numFourStar = persistentSpec.fourStarGoals.length;
   const numPhaseGoals = phaseGoals.length;
 
+  // Continuation slices are keyed by persistentCode alone (no phase-local goals).
+  const contPhaseSpec = buildPhaseLocalSpec([]);
+  const contShapes = continuation ? enumerateOutcomeShapes(banner, continuation.characterConfig, continuation.weaponConfig) : [];
+  const contAdapter = continuation
+    ? makeBannerAdapter(banner, continuation.characterConfig, continuation.weaponConfig, crModel, crParams, new Map(contShapes.map((o, i) => [outcomeKey(o), i])))
+    : undefined;
+  const noClosedWeapons: ReadonlySet<string> = new Set();
+  let contSlices = new SliceMap(bannerModulus);
+
   function sliceKeyOf(persistentCode: number, phaseCode: number): number {
     return persistentCode * phaseModulus + phaseCode;
   }
 
-  // `startDist`/`exitSubstateDist` keys are ALWAYS 3-part-encoded, mixed-radix
-  // (bannerCode, persistentCode, phaseCode) — see phaseKeyOf/decodePhaseKey
-  // below. Twenty-first reported bug (2026-08-30): this used to be 2-part
-  // (bannerCode, persistentCode only), with the phase-local FIFO counter
-  // unconditionally reset to 0 on every phase entry — correct for the
-  // overwhelming majority of phases (a later phase's 5star_character goal
-  // really is a separate, later win), but wrong for two phases sharing one
-  // real, LINKED-simultaneous 5star_character window split apart by an
-  // interleaved different-banner detour (see phases.ts's
-  // computeCharacterWindowPartnerPhase) — there, a featured win landing
-  // during the FIRST phase's own extra pulls (past its own claim, while a
-  // same-window 4-star is still short of target) must roll over onto the
-  // SECOND phase's still-open slot instead of vanishing. Always including
-  // phaseCode costs nothing for an ordinary phase — every one of its own
-  // native 5star_character members already blocks it (exactEngine.ts's
-  // `blockingGoals` always includes a phase's own native 5-star/weapon
-  // goals unconditionally), so phaseCode is pinned to a single fixed value
-  // at the point of graduation regardless, adding no new distinct keys.
-  // Whether a given phase transition actually CARRIES the decoded phaseCode
-  // forward or resets it to 0 is entirely exactEngine.ts's call — see its
-  // own doc comment on `effectivePhaseGoals`/`isSecondOfWindowPair`.
+  // startDist/exitSubstateDist keys always carry all three parts (see exitSubstateDist). An
+  // ordinary phase pins phaseCode at graduation (its own 5★s all block it), so this adds no
+  // distinct keys; whether phaseCode carries into the next phase is exactEngine.ts's call.
   let active = new SliceMap(bannerModulus);
   for (const [startKey, prob] of startDist) {
     const phaseCode = startKey % phaseModulus;
@@ -417,15 +304,15 @@ export function runPhaseDp(
   const blockingPrefixDone = new Float64Array(maxPulls + 1);
   const activeLevelCounts: Float64Array[][] = persistentSpec.fourStarGoals.map((fg) => Array.from({ length: fg.maxCopies }, () => new Float64Array(maxPulls + 1)));
   const graduatedLevelCounts: Float64Array[][] = persistentSpec.fourStarGoals.map((fg) => Array.from({ length: fg.maxCopies }, () => new Float64Array(maxPulls + 1)));
+  const continuationLevelCounts: Float64Array[][] | undefined = continuation
+    ? persistentSpec.fourStarGoals.map((fg) => Array.from({ length: fg.maxCopies }, () => new Float64Array(maxPulls + 1)))
+    : undefined;
 
   let graduatedTotal = 0;
   // graduatedLevelMass[fourStarIdx][exact copy count at graduation] = accumulated mass
   const graduatedLevelMass: number[][] = persistentSpec.fourStarGoals.map((fg) => new Array(fg.maxCopies + 1).fill(0));
-  // graduatedPrefixMassAtStreak[k] = mass that graduated (blockingGoals satisfied)
-  // WHILE its own joint "phaseGoals[0..k] all done" streak reached exactly k — see
-  // computePrefixStreak below and localPrefixDone's own doc comment. Read via a
-  // suffix sum in flushGraduatedLevelCounts (mass with streak>=k also counts
-  // toward localPrefixDone[k], since a longer streak implies every shorter one).
+  // graduatedPrefixMassAtStreak[k] = graduated mass whose "phaseGoals[0..k] all done" streak was
+  // exactly k (computePrefixStreak). Read as a suffix sum: a longer streak implies every shorter one.
   const graduatedPrefixMassAtStreak: number[] = new Array(numPhaseGoals).fill(0);
 
   /** The largest k such that phaseGoals[0..k] are ALL done (isGoalDone), or -1 if
@@ -491,17 +378,42 @@ export function runPhaseDp(
     }
   }
 
-  // l=0: split out any state that ALREADY satisfies every phase goal upon entry
-  // (carried over from a prior phase via startDist) before it gets a chance to take
-  // an extra, un-graduated pull. Without this, "already done at entry" mass would
-  // sit in `active` through l=1's transition and could pick up one more copy (or
-  // more, across the loop) before ever being checked for isPhaseFullyDone — since
-  // that check only ever runs on a POST-transition vector — over-counting relative
-  // to "became done during THIS phase" mass, which graduates on the exact pull
-  // that satisfies it, not one pull later. This was a real bug: with cross-phase
-  // persistent carryover, entering "already done" is now a normal occurrence (a
-  // 4-star's target can already be met from an earlier phase's opportunistic
-  // accrual), not just a theoretical edge case.
+  /** Reports continuation mass into continuationLevelCounts[*][*][l]. */
+  function reportContinuation(l: number): void {
+    if (!continuationLevelCounts) return;
+    for (const [persistentCode, arr] of contSlices.arrays) {
+      const mass = sumMass(arr);
+      const persistentVector = decodeVector(persistentSpec.dims, persistentCode);
+      for (let fi = 0; fi < numFourStar; fi++) {
+        const copies = copyCountOf(persistentSpec, persistentVector, persistentSpec.fourStarGoals[fi].goal.targetId);
+        for (let level = 0; level < copies; level++) continuationLevelCounts[fi][level][l] += mass;
+      }
+    }
+  }
+
+  /** One continuation pull: only 4★ copies on the roster change (no phase-local goals, no 5★
+   * weapon tracking — its 5★ ids are placeholders). */
+  function evolveContinuation(into: SliceMap): void {
+    for (const [persistentCode, arr] of contSlices.arrays) {
+      const persistentVector = decodeVector(persistentSpec.dims, persistentCode);
+      const destByOutcome = contShapes.map((outcome) => {
+        const next = updateGoalTracking(contPhaseSpec, persistentSpec, [], persistentVector, outcome, continuation!.closedGoalIds, noClosedWeapons);
+        return into.getOrCreateArray(encodeVector(persistentSpec.dims, next.persistentVector));
+      });
+      for (let bannerCode = 0; bannerCode < bannerModulus; bannerCode++) {
+        const mass = arr[bannerCode];
+        if (mass <= 0) continue;
+        for (const t of contAdapter!.getTransitions(bannerCode)) {
+          const branchProb = mass * t.probability;
+          if (branchProb > 0) destByOutcome[t.outcomeIndex][t.nextBannerCode] += branchProb;
+        }
+      }
+    }
+  }
+
+  // l=0: mass that already satisfies blockingGoals on entry (carried over from an earlier phase)
+  // graduates immediately. Left active, it would take a pull first — the done check only runs on
+  // post-transition vectors — and could pick up copies that mass finishing during this phase can't.
   const stillActive = new SliceMap(bannerModulus);
   for (const [sliceKey, arr] of active.arrays) {
     const persistentCode = Math.floor(sliceKey / phaseModulus);
@@ -516,6 +428,10 @@ export function runPhaseDp(
         exitSubstateDist.set(exitKey, (exitSubstateDist.get(exitKey) ?? 0) + mass);
       }
       recordGraduated(sumMass(arr), phaseVector, persistentVector);
+      if (continuation) {
+        const dest = contSlices.getOrCreateArray(persistentCode);
+        for (let bannerCode = 0; bannerCode < bannerModulus; bannerCode++) dest[bannerCode] += arr[bannerCode];
+      }
     } else {
       stillActive.arrays.set(sliceKey, arr);
     }
@@ -524,9 +440,16 @@ export function runPhaseDp(
 
   flushGraduatedLevelCounts(0);
   reportActive(active, 0);
+  reportContinuation(0);
 
   for (let l = 1; l <= maxPulls; l++) {
     const nextActive = new SliceMap(bannerModulus);
+    // Continuation mass pulls until the horizon, then stays put; this pull's graduates join it after.
+    let nextCont = contSlices;
+    if (continuation && l <= continuation.horizon) {
+      nextCont = new SliceMap(bannerModulus);
+      evolveContinuation(nextCont);
+    }
 
     for (const [sliceKey, arr] of active.arrays) {
       const persistentCode = Math.floor(sliceKey / phaseModulus);
@@ -534,12 +457,7 @@ export function runPhaseDp(
       const phaseVector = decodeVector(phaseSpec.dims, phaseCode);
       const persistentVector = decodeVector(persistentSpec.dims, persistentCode);
 
-      // Precompute this slice's goal-tracking result ONCE per outcome shape — see
-      // this function's doc comment for why this is the whole point. Indexed by
-      // position in outcomeShapes (matching each CachedTransition's precomputed
-      // outcomeIndex) rather than keyed by string, since this is read from the
-      // innermost per-(bannerCode, transition) loop below — tens of thousands of
-      // times per slice per pull — where a plain array index beats a Map.get.
+      // This slice's goal-tracking result, once per outcome shape (indexed like outcomeShapes).
       const perOutcome: SliceOutcomeResult[] = new Array(outcomeShapes.length);
       for (let oi = 0; oi < outcomeShapes.length; oi++) {
         const outcome = outcomeShapes[oi];
@@ -554,14 +472,11 @@ export function runPhaseDp(
         );
         if (isPhaseFullyDone(phaseSpec, persistentSpec, newPhaseVector, newPersistentVector, blockingGoals)) {
           const newPersistentCode = encodeVector(persistentSpec.dims, newPersistentVector);
-          // Always encoded (not just when a window-carry is in play, see this
-          // function's doc comment on the 3-part key format) — a plain,
-          // never-carried phase pins this to the phase's own single "every
-          // native 5-star claimed" value, adding no new distinct exit keys.
           const newPhaseCode = encodeVector(phaseSpec.dims, newPhaseVector);
           const copiesPerFourStar = persistentSpec.fourStarGoals.map((fg) => copyCountOf(persistentSpec, newPersistentVector, fg.goal.targetId));
           const prefixStreak = computePrefixStreak(newPhaseVector, newPersistentVector);
-          perOutcome[oi] = { done: true, newPersistentCode, newPhaseCode, copiesPerFourStar, prefixStreak };
+          const contDest = continuation ? nextCont.getOrCreateArray(newPersistentCode) : undefined;
+          perOutcome[oi] = { done: true, newPersistentCode, newPhaseCode, copiesPerFourStar, prefixStreak, contDest };
         } else {
           const newPersistentCode = encodeVector(persistentSpec.dims, newPersistentVector);
           const newPhaseCode = encodeVector(phaseSpec.dims, newPhaseVector);
@@ -570,11 +485,7 @@ export function runPhaseDp(
         }
       }
 
-      // Epitomized Path retarget (see this function's doc comment on
-      // weaponConfigAfterFirstClaimed): once this slice's own persistent vector
-      // already shows the phase's first weapon goal as obtained, use the
-      // swapped adapter for every bannerCode in this slice — resolved once per
-      // slice per pull, not once per bannerCode.
+      // Epitomized Path retarget: once this slice shows the first weapon obtained, use the swapped adapter.
       const activeAdapter = firstWeaponGoalIndex !== -1 && persistentVector[firstWeaponGoalIndex] === 1 ? adapterAfterFirstClaimed! : adapter;
 
       for (let bannerCode = 0; bannerCode < bannerModulus; bannerCode++) {
@@ -591,6 +502,7 @@ export function runPhaseDp(
             graduatedTotal += branchProb;
             for (let fi = 0; fi < numFourStar; fi++) graduatedLevelMass[fi][pre.copiesPerFourStar[fi]] += branchProb;
             if (pre.prefixStreak >= 0) graduatedPrefixMassAtStreak[pre.prefixStreak] += branchProb;
+            if (pre.contDest) pre.contDest[t.nextBannerCode] += branchProb;
           } else {
             pre.destArray[t.nextBannerCode] += branchProb;
           }
@@ -599,9 +511,11 @@ export function runPhaseDp(
     }
 
     active = nextActive;
+    contSlices = nextCont;
     flushGraduatedLevelCounts(l);
     reportActive(active, l);
+    reportContinuation(l);
   }
 
-  return { exitSubstateDist, localPrefixDone, graduatedPrefixDone, blockingPrefixDone, activeLevelCounts, graduatedLevelCounts };
+  return { exitSubstateDist, localPrefixDone, graduatedPrefixDone, blockingPrefixDone, activeLevelCounts, graduatedLevelCounts, continuationLevelCounts };
 }

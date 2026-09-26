@@ -1,4 +1,4 @@
-import { char4Rate, weapon5Rate } from './pity';
+import { weapon4Rate, weapon5Rate } from './pity';
 import type { PullOutcome, Transition, WeaponBannerConfig, WeaponBannerState } from './types';
 
 /**
@@ -7,10 +7,8 @@ import type { PullOutcome, Transition, WeaponBannerConfig, WeaponBannerState } f
  * transitionCharacterBanner as the single source of truth for weapon banner mechanics
  * (no Capturing Radiance here — that mechanic is character-banner-only).
  *
- * The 5-star branch combines TWO genuinely independent mechanics — confirmed
- * against real Genshin mechanics (75/25 pity + Epitomized Path Fate Points are
- * documented as separate systems) and the user's own detailed correction on
- * exactly how they interact, 2026-08-19:
+ * The 5-star branch combines TWO independent mechanics (75/25 pity and Epitomized Path Fate
+ * Points are separate systems in the real game):
  * - `guaranteed5` (this banner's own 75/25 pity, parallel to the character
  *   banner's 50/50 `guaranteed5`): after a standard (non-event) 5-star, the
  *   NEXT 5-star is guaranteed to be one of the 2 event weapons. On its own
@@ -37,13 +35,13 @@ export function transitionWeaponBanner(
   config: WeaponBannerConfig,
 ): Transition<WeaponBannerState>[] {
   const p5 = weapon5Rate(state.pity5 + 1);
-  const p4 = char4Rate(state.pity4 + 1);
+  const p4 = weapon4Rate(state.pity4 + 1);
 
   const transitions: Transition<WeaponBannerState>[] = [];
 
   // 5-star branch.
   if (p5 > 0) {
-    // See characterBanner.ts: capping at 9 is lossless since char4Rate is flat
+    // See characterBanner.ts: capping at 9 is lossless since weapon4Rate is flat
     // beyond it, and keeps the exact-DP state space bounded.
     const pity4After = Math.min(state.pity4 + 1, 9);
     const base = { pity4: pity4After, guaranteed4: state.guaranteed4 };

@@ -69,7 +69,7 @@ describe('invariant: anchor permissiveness is monotonic', () => {
     // fix unlocks (same-banner spanning with NO detour between the two 5★
     // phases at all). Her OWN breakdown (accumulatedLevelCounts, unchanged
     // machinery) inherits the SAME architectural limitation already documented
-    // for crCounter (CLAUDE.md's "twelfth reported bug" follow-up) and the
+    // for crCounter (CHANGELOG.md's "twelfth reported bug" follow-up) and the
     // original 4★-breakdown cross-phase residual: her copy count is genuinely
     // correlated with how long the PRECEDING phase took, and the phase-handoff
     // marginalizes over arrival time, losing that correlation. Measured here at
@@ -114,7 +114,7 @@ describe('invariant: anchor permissiveness is monotonic', () => {
     // "both" case, Alyosha is a NON-BLOCKING member of Odette's own phase
     // (side-tracked), so Miko's phase inherits her carried-over copy count
     // from a startDist that's marginalized over Odette's-phase arrival time —
-    // the same already-documented, accepted class of approximation (CLAUDE.md's
+    // the same already-documented, accepted class of approximation (CHANGELOG.md's
     // "twelfth reported bug" follow-up / "4★ breakdowns sum across every
     // phase"), just now reachable at the series level too via this shape.
     // Measured well under 0.01 here, an order of magnitude below the epsilon.
@@ -187,12 +187,13 @@ describe('invariant: prefix independence — later goals cannot affect earlier o
   // consequence of the fix's own scope boundary, not a bug: whether a
   // 4-star's banner gets a "keep pulling for bonus copies" trailing
   // continuation depends on whether that banner owns the LITERAL LAST phase
-  // of the WHOLE list. Appending a goal on a DIFFERENT banner (here, a
-  // weapon goal after Miko) means the character banner is no longer the
-  // tail — Alyosha (anchored to Odette, already-attached) genuinely loses
-  // her own "bonus accrual past C0" eligibility, since a real player would
-  // spend that same leftover budget on the newly-appended weapon goal
-  // instead. Her OWN TARGET LEVEL (C0 here, unaffected either way — she
+  // of the WHOLE list (and only for 4★s on that last phase's own roster).
+  // Appending a goal on a DIFFERENT banner means the character banner is no
+  // longer the tail, so a 4★ on its last roster loses her "bonus accrual past
+  // target" eligibility — a real player would spend that leftover budget on
+  // the newly-appended goal instead. (Alyosha here is anchored to Odette only,
+  // so she isn't on Miko's roster and never gets that continuation either
+  // way.) Her OWN TARGET LEVEL (C0 here, unaffected either way — she
   // either has it or she doesn't, determined entirely within her own natal
   // phase's DP, before any continuation could matter) stays exactly prefix-
   // independent; only levels ABOVE her target can legitimately shrink.
@@ -353,4 +354,40 @@ describe('invariant: a goal that is the sole member of its own required phase mu
     const breakdown42 = result.breakdowns.find((b) => b.goalId === '42')!;
     expect(breakdown42.levelProbabilities[0][1000]).toBeGreaterThan(0.99);
   }, 90_000);
+});
+
+describe('invariant: a 4★ breakdown only counts copies she can actually get', () => {
+  const alyosha: Goal = { id: 'a', name: 'Alyosha', kind: '4star_character', banner: 'character', targetId: 'c4a', anchoredFiveStarGoalIds: ['o'] };
+  const w1: Goal = { id: 'w1', name: 'W1', kind: '5star_weapon', banner: 'weapon', targetId: 'w1' };
+  const w2: Goal = { id: 'w2', name: 'W2', kind: '5star_weapon', banner: 'weapon', targetId: 'w2' };
+
+  it('copies won before a detour of two consecutive weapon phases stay counted through the whole detour', () => {
+    // [Odette, Alyosha, W1, W2(unlinked), Miko]: the two weapon goals are
+    // separate phases, so Alyosha's copies are "in transit" across both. The
+    // breakdown used to only bridge the first of them, dropping to ~50% at
+    // C0 while W2 ran even though she can never lose a copy.
+    const pullBudget = 300;
+    const result = runExactSimulation(baseInput({ pullBudget, goals: [odette, alyosha, w1, w2, miko] }));
+    const c0 = result.breakdowns.find((b) => b.goalId === 'a')!.levelProbabilities[0];
+    for (let p = 1; p <= pullBudget; p++) expect(c0[p]).toBeGreaterThanOrEqual(c0[p - 1] - 1e-9);
+    // Odette + Alyosha done implies Alyosha has reached C0.
+    for (let p = 0; p <= pullBudget; p++) expect(c0[p]).toBeGreaterThanOrEqual(result.series[1].probabilities[p] - 1e-9);
+  }, 60_000);
+
+  it('the trailing continuation only features 4★s on the last phase\'s roster', () => {
+    // Alyosha is anchored to Odette only, and Miko (unlinked) is a later,
+    // sequential phase — so pulling on past Miko never features her. Her
+    // breakdown must plateau the same whether or not a weapon goal follows
+    // Miko (which moves the continuation onto the weapon banner). It used to
+    // keep climbing toward C6 whenever the character banner was last.
+    const pullBudget = 400;
+    const homa: Goal = { id: 'homa', name: 'Homa', kind: '5star_weapon', banner: 'weapon', targetId: 'homa' };
+    const characterLast = runExactSimulation(baseInput({ pullBudget, goals: [odette, alyosha, homa, miko] }));
+    const weaponLast = runExactSimulation(baseInput({ pullBudget, goals: [odette, alyosha, homa, miko, w1] }));
+    const a = characterLast.breakdowns.find((b) => b.goalId === 'a')!;
+    const b = weaponLast.breakdowns.find((x) => x.goalId === 'a')!;
+    for (let level = 0; level < a.levelProbabilities.length; level++) {
+      expect(Math.abs(a.levelProbabilities[level][pullBudget] - b.levelProbabilities[level][pullBudget])).toBeLessThan(0.01);
+    }
+  }, 60_000);
 });

@@ -42,8 +42,8 @@ const WEAPON_G5 = 2;
 const WEAPON_FP = 2;
 const WEAPON_P4 = 10;
 const WEAPON_G4 = 2;
-/** pity5 is 0-79 (hard pity at 80) — see CHAR_BANNER_MODULUS's comment above. */
-const WEAPON_PITY5_VALUES = 80;
+/** pity5 is 0-76 (the rate reaches 100% at pull 77 — see pity.ts's weapon5Rate) — see CHAR_BANNER_MODULUS's comment above. */
+const WEAPON_PITY5_VALUES = 77;
 export const WEAPON_BANNER_MODULUS = WEAPON_PITY5_VALUES * WEAPON_G5 * WEAPON_FP * WEAPON_P4 * WEAPON_G4;
 
 export function encodeWeaponState(s: WeaponBannerState): number {

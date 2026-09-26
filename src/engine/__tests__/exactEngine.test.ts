@@ -322,7 +322,7 @@ describe('4-star anchored to specific 5-star banner(s) — end-to-end', () => {
       // getting >=1 Alyosha copy doesn't require Odette AND Weapon to be finished.
       expect(breakdown.levelProbabilities[0][p]).toBeGreaterThan(result.series[2].probabilities[p] + 0.1);
     }
-    // At pull 50 in particular, Odette (hard pity 90) and Weapon (hard pity 80)
+    // At pull 50 in particular, Odette (hard pity 90) and Weapon (5-star certain at 77)
     // are both still very unlikely to be fully done, yet Alyosha's marginal is
     // already substantial — proof it isn't gated on them.
     expect(breakdown.levelProbabilities[0][50]).toBeGreaterThan(0.5);
@@ -548,23 +548,23 @@ describe('weapon Epitomized Path identity is computed per phase, not once global
     // per-5-star-pull chance, forever -- P(done) approaches 1 as pulls -> infinity
     // but never actually REACHES 1 at any finite pull count. With the fix, WeaponB
     // is correctly "chosen" in its OWN phase (the only 5star_weapon goal there),
-    // so it inherits the same 160-pull deterministic worst-case guarantee any
+    // so it inherits the same 154-pull deterministic worst-case guarantee any
     // fresh weapon banner has (see simulate.test.ts's "P(chosen path weapon within
-    // 160 pulls...) = 1" closed-form check) -- this test is that same guarantee,
+    // 154 pulls...) = 1" closed-form check) -- this test is that same guarantee,
     // reached through TWO earlier phases instead of from a cold start.
     //
     // Both earlier phases are seeded so their OWN deterministic worst-case bound
     // is known exactly -- each banner's "guarantee" mechanic only guarantees WHICH
     // identity your next featured win resolves to, not that the very next pull
     // itself produces one, so each is a "2 hard-pity cycles" bound (matching
-    // simulate.test.ts's own "P(chosen path weapon within 160 pulls, fatePoints=0,
+    // simulate.test.ts's own "P(chosen path weapon within 154 pulls, fatePoints=0,
     // from pity 0) = 1" check), just starting partway through the first cycle:
-    // - WeaponA: weapon state seeded at pity5=79 -- the VERY NEXT pull is a
+    // - WeaponA: weapon state seeded at pity5=76 -- the VERY NEXT pull is a
     //   guaranteed 5-star (hard pity), but only 37.5% chance it's "chosen"
     //   directly; a miss sets fatePoints=1 with pity5 reset to 0, needing up to
-    //   ANOTHER 80 pulls (a full hard-pity cycle, weapon hard pity = 80) to force
-    //   the next 5-star, which IS then guaranteed chosen. Worst case: 1 + 80 = 81
-    //   pulls, P=1 (confirmed directly via exactWeaponBannerCdf: cdf[81] ≈ 1).
+    //   ANOTHER 77 pulls (a full hard-pity cycle, weapon 5-star certain at 77) to
+    //   force the next 5-star, which IS then guaranteed chosen. Worst case:
+    //   1 + 77 = 78 pulls, P=1.
     // - The character detour: a single 5star_character goal seeded at pity5=89 --
     //   the VERY NEXT pull is a guaranteed 5-star (character hard pity = 90), but
     //   still has to WIN its 50/50 to count as "featured" (5star_character
@@ -573,36 +573,36 @@ describe('weapon Epitomized Path identity is computed per phase, not once global
     //   pulls to force the next 5-star, which IS then guaranteed featured (bypasses
     //   the 50/50 entirely). Worst case: 1 + 90 = 91 pulls, P=1 (confirmed
     //   directly via exactCharacterBannerCdf: cdf[91] ≈ 1).
-    // So by global pull 172 (81 + 91), phase 0 + phase 1 are done with certainty,
+    // So by global pull 169 (78 + 91), phase 0 + phase 1 are done with certainty,
     // and WeaponB's own phase has started with certainty. Critically, every path
     // that satisfies WeaponA ends via the "chosen" outcome (the ONLY outcome that
     // completes WeaponA's goal), which ALWAYS resets pity5=0 AND fatePoints=0
     // (both the guaranteed and non-guaranteed win branches in weaponBanner.ts do
     // this) -- so WeaponB's own phase deterministically starts completely fresh on
     // the 5-star axis, regardless of which sub-path occurred, inheriting the same
-    // 160-pull worst-case guarantee a cold start has. Total worst case: 172 + 160 = 332.
+    // 154-pull worst-case guarantee a cold start has. Total worst case: 169 + 154 = 323.
     const weaponA: Goal = { id: 'wa', name: 'WeaponA', kind: '5star_weapon', banner: 'weapon', targetId: 'chosen' };
     const charDetour: Goal = { id: 'c', name: 'CharDetour', kind: '5star_character', banner: 'character', targetId: 'char5' };
     const weaponB: Goal = { id: 'wb', name: 'WeaponB', kind: '5star_weapon', banner: 'weapon', targetId: 'other' };
     const input = baseInput({
       goals: [weaponA, charDetour, weaponB],
-      pullBudget: 332, // 172 (deterministic setup, phases 0-1) + 160 (WeaponB's own deterministic Fate Point worst case)
+      pullBudget: 323, // 169 (deterministic setup, phases 0-1) + 154 (WeaponB's own deterministic Fate Point worst case)
       trialCount: 300_000,
       seed: 25,
-      weaponBanner: { state: { pity5: 79, guaranteed5: false, fatePoints: 0, pity4: 0, guaranteed4: false } },
+      weaponBanner: { state: { pity5: 76, guaranteed5: false, fatePoints: 0, pity4: 0, guaranteed4: false } },
       characterBanner: { state: { pity5: 89, guaranteed5: false, crCounter: 0, pity4: 0, guaranteed4: false }, featured5StarId: charConfig.featured5StarId },
     });
     const exact = runExactSimulation(input);
     const mc = runSimulation(input);
 
     // All 3 goals done: guaranteed by construction (phases 0-1 deterministic by
-    // pull 172; WeaponB's own 160-pull deterministic guarantee covers the rest).
+    // pull 169; WeaponB's own 154-pull deterministic guarantee covers the rest).
     // This specific near-certainty is only reachable with the fix -- under the old
     // bug, WeaponB has no deterministic bound at all, so this would NOT approach 1
-    // this tightly by pull 332.
-    expect(exact.series[2].probabilities[332]).toBeGreaterThan(0.999);
+    // this tightly by pull 323.
+    expect(exact.series[2].probabilities[323]).toBeGreaterThan(0.999);
 
-    for (const p of [100, 200, 300, 332]) {
+    for (const p of [100, 200, 300, 323]) {
       expect(Math.abs(exact.series[2].probabilities[p] - mc.series[2].probabilities[p])).toBeLessThan(0.03);
     }
   }, 30_000);
@@ -653,7 +653,7 @@ describe('4-star pool is computed per phase, not once globally — eleventh repo
     // because a1's FROZEN phase0-exit value still rides along as a live dimension
     // during phase2's own DP (phase2 unconditionally recomputes activeLevelCounts/
     // graduatedLevelCounts for every fourStarGoals index, a1 included, even though
-    // a1's own value never changes there), which is exactly CLAUDE.md's already-
+    // a1's own value never changes there), which is exactly CHANGELOG.md's already-
     // documented "known remaining limitation" (a 4-star's frozen copy count is
     // correlated with how long the preceding phase took, which the time-
     // marginalized phase handoff doesn't fully preserve) -- confirmed there as "well
@@ -756,22 +756,21 @@ describe('weapon banner: Epitomized Path must retarget to the second same-phase 
     // pull 2. Before this fix, WeaponB had NO deterministic bound at all (Fate
     // Points always resolved to WeaponA, forever) -- it could only ever be won
     // via the organic 37.5%/50% roll. With the fix: worst case for WeaponB is
-    // hard pity (80) landing "other" (WeaponA again -- banks a fate point, since
-    // WeaponA is now the "other" identity post-retarget) -- wait, actually the
-    // worst case is landing on the OTHER identity relative to WeaponB, which
-    // post-retarget is WeaponA -- then a full second hard-pity cycle (<=80 more)
-    // forces the guaranteed-chosen (WeaponB) win. So: 1 (WeaponA) + 80 + 80 = 161.
+    // a full hard-pity cycle (77) landing on the OTHER identity relative to
+    // WeaponB -- post-retarget that's WeaponA, which banks a fate point -- then
+    // a second full cycle (<=77 more) forces the guaranteed-chosen (WeaponB)
+    // win. So: 1 (WeaponA) + 77 + 77 = 155.
     const weaponA: Goal = { id: 'wa', name: 'WeaponA', kind: '5star_weapon', banner: 'weapon', targetId: 'chosen' };
     const weaponB: Goal = { id: 'wb', name: 'WeaponB', kind: '5star_weapon', banner: 'weapon', targetId: 'other' };
     const input = baseInput({
       goals: [weaponA, weaponB],
-      pullBudget: 161,
-      weaponBanner: { state: { pity5: 79, guaranteed5: false, fatePoints: 1, pity4: 0, guaranteed4: false } },
+      pullBudget: 155,
+      weaponBanner: { state: { pity5: 76, guaranteed5: false, fatePoints: 1, pity4: 0, guaranteed4: false } },
     });
     const exact = runExactSimulation(input);
     const pBoth = exact.series[1].probabilities; // P(WeaponA AND WeaponB done)
     expect(pBoth[1]).toBe(0); // WeaponA alone is done at pull 1; WeaponB isn't yet.
-    expect(pBoth[161]).toBeCloseTo(1, 9);
+    expect(pBoth[155]).toBeCloseTo(1, 9);
     // Confirm the distribution isn't trivially saturated long before the real
     // bound -- if the retarget weren't happening, WeaponB would only have the
     // organic 50% roll (guaranteed5 is false here), and P(both) at pull 80
@@ -800,13 +799,13 @@ describe('weapon banner: Epitomized Path must retarget to the second same-phase 
     // already hold by construction -- verified numerically here rather than
     // just by code inspection: WeaponA's OWN completion (independent of
     // whatever happens to WeaponB) must still reach its full, undiminished
-    // 160-pull deterministic bound. If EP had incorrectly swapped away from
+    // 154-pull deterministic bound. If EP had incorrectly swapped away from
     // WeaponA at any point before WeaponA's own claim, this bound would break.
     const weaponA: Goal = { id: 'wa', name: 'WeaponA', kind: '5star_weapon', banner: 'weapon', targetId: 'chosen' };
     const weaponB: Goal = { id: 'wb', name: 'WeaponB', kind: '5star_weapon', banner: 'weapon', targetId: 'other' };
-    const input = baseInput({ goals: [weaponA, weaponB], pullBudget: 160 });
+    const input = baseInput({ goals: [weaponA, weaponB], pullBudget: 154 });
     const result = runExactSimulation(input);
-    expect(result.series[0].probabilities[160]).toBeCloseTo(1, 9);
+    expect(result.series[0].probabilities[154]).toBeCloseTo(1, 9);
   });
 
   // Regression guard for the guard itself (a phase with only 1 5star_weapon
@@ -942,17 +941,17 @@ describe('5star_weapon window linking is explicit, not inferred from adjacency �
     // match) -- while ALSO showing its own dip of similar magnitude (~0.008) at
     // higher levels, meaning the small residual dip that remains under THIS
     // fix (up to ~0.7 percentage points around pull 128-142, levels ABOVE the
-    // target R3-R5) isn't something this fix introduces -- it's CLAUDE.md's
+    // target R3-R5) isn't something this fix introduces -- it's CHANGELOG.md's
     // already-documented "Known remaining limitation" (a 4-star's copy count is
     // genuinely correlated with how long the preceding phase took, which the
     // convolution-based phase handoff doesn't fully preserve), present under
     // either code path, just larger here than the "well under 0.1pp" figure
-    // CLAUDE.md measured for an unanchored 4-star crossing a DIFFERENT-banner
-    // detour. Not this fix's bug to solve (see CLAUDE.md's own scoping of that
+    // CHANGELOG.md measured for an unanchored 4-star crossing a DIFFERENT-banner
+    // detour. Not this fix's bug to solve (see CHANGELOG.md's own scoping of that
     // limitation); the exact-match check above -- which the OLD code failed by
     // up to 61 percentage points and even briefly exceeded probability 1 -- is
     // the real, decisive regression guard for what this test exists to catch.
-    // See CLAUDE.md for the updated measurement.
+    // See CHANGELOG.md for the updated measurement.
   });
 });
 
@@ -997,7 +996,7 @@ describe('isNextFiveStarClaimBlocked must ignore a 4-star with ZERO anchors in t
 describe('an explicit empty anchoredFiveStarGoalIds always means disconnected FROM EVERY REAL, LISTED PHASE, even with just one candidate — eighteenth reported bug follow-up', () => {
   // Before this fix, `undefined` (never touched) and an explicit `[]` (user
   // actively unchecked the one available box) were indistinguishable at the
-  // engine level, since hasFourStarAnchorAmbiguity only ever treated 2+
+  // engine level, since hasFourStarAnchorAmbiguity (now removed) only ever treated 2+
   // candidates as real ambiguity — with exactly one candidate, BOTH fell into
   // the same "nothing to disconnect from, keep counting" fallback. That made
   // it impossible to express "Odette (5★), then this 4★ that's on a
@@ -1223,4 +1222,71 @@ describe("a 4★ anchored to BOTH ends of a linked-but-non-adjacent character wi
       }
     }
   }, 30_000);
+});
+
+describe('4★ breakdowns match Monte Carlo', () => {
+  // Monte Carlo tracks copies independently (including past each target, and through the trailing
+  // continuation), so these cross-check the breakdown panel the way the series tests cross-check
+  // the odds chart. The one shape not covered is a 4★ still on the roster across several phases of
+  // her banner, where the known time-marginalization residual remains — see ARCHITECTURE.md's
+  // "Known limitations".
+  function expectBreakdownsAgree(goals: Goal[], pullBudget: number, checkpoints: number[]) {
+    const input = baseInput({ goals, pullBudget, trialCount: 60_000, seed: 31 });
+    const exact = runExactSimulation(input);
+    const mc = runSimulation(input);
+    expect(mc.breakdowns.map((b) => b.goalId)).toEqual(exact.breakdowns.map((b) => b.goalId));
+    for (const b of exact.breakdowns) {
+      const m = mc.breakdowns.find((x) => x.goalId === b.goalId)!;
+      expect(m.levelLabels).toEqual(b.levelLabels);
+      b.levelProbabilities.forEach((curve, level) => {
+        for (const p of checkpoints) expect(Math.abs(curve[p] - m.levelProbabilities[level][p])).toBeLessThan(0.015);
+      });
+    }
+  }
+  const odette: Goal = { id: 'o', name: 'Odette', kind: '5star_character', banner: 'character', targetId: 'char5' };
+
+  it('a 4★ whose copies freeze when its banner is left for good', () => {
+    const alyosha: Goal = { id: 'a', name: 'Alyosha', kind: '4star_character', banner: 'character', targetId: 'c4a', targetLevel: 2 };
+    const weapon: Goal = { id: 'w', name: 'Weapon', kind: '5star_weapon', banner: 'weapon', targetId: 'chosen' };
+    expectBreakdownsAgree([odette, alyosha, weapon], 250, [40, 90, 160, 250]);
+  }, 60_000);
+
+  it('a 4★ targeting C6, with nothing past its target', () => {
+    const alyosha: Goal = { id: 'a', name: 'Alyosha', kind: '4star_character', banner: 'character', targetId: 'c4a', targetLevel: 6 };
+    expectBreakdownsAgree([odette, alyosha], 250, [40, 90, 160, 250]);
+  }, 60_000);
+
+  it('a lone 4★ collecting bonus copies in the trailing continuation', () => {
+    const alyosha: Goal = { id: 'a', name: 'Alyosha', kind: '4star_character', banner: 'character', targetId: 'c4a' };
+    expectBreakdownsAgree([alyosha], 200, [20, 60, 120, 200]);
+  }, 60_000);
+
+  it('a disconnected 4★ in its own isolated phase', () => {
+    const alyosha: Goal = { id: 'a', name: 'Alyosha', kind: '4star_character', banner: 'character', targetId: 'c4a', anchoredFiveStarGoalIds: [] };
+    expectBreakdownsAgree([odette, alyosha], 250, [40, 90, 160, 250]);
+  }, 60_000);
+
+  it('a 4★ collecting bonus copies past her target in the trailing continuation (was 6pp off when the continuation was a separate, averaged phase)', () => {
+    const alyosha: Goal = { id: 'a', name: 'Alyosha', kind: '4star_character', banner: 'character', targetId: 'c4a', targetLevel: 2 };
+    expectBreakdownsAgree([odette, alyosha], 250, [60, 120, 161, 250]);
+  }, 60_000);
+
+  it('a 4★ whose window closes before a later phase of her banner (her copies freeze; was 8pp off via the hand-off)', () => {
+    const alyosha: Goal = { id: 'a', name: 'Alyosha', kind: '4star_character', banner: 'character', targetId: 'c4a', anchoredFiveStarGoalIds: ['o'] };
+    const weapon: Goal = { id: 'w', name: 'Weapon', kind: '5star_weapon', banner: 'weapon', targetId: 'chosen' };
+    const miko: Goal = { id: 'm', name: 'Miko', kind: '5star_character', banner: 'character', targetId: 'char5' };
+    expectBreakdownsAgree([odette, alyosha, weapon, miko], 300, [73, 150, 213, 300]);
+  }, 60_000);
+
+  it('a 4★ weapon targeting R3, with bonus refinements from the continuation', () => {
+    const weapon: Goal = { id: 'w', name: 'Weapon', kind: '5star_weapon', banner: 'weapon', targetId: 'chosen' };
+    const sword: Goal = { id: 's', name: 'Sword', kind: '4star_weapon', banner: 'weapon', targetId: 'w4a', targetLevel: 3 };
+    expectBreakdownsAgree([weapon, sword], 250, [65, 138, 250]);
+  }, 60_000);
+
+  it('a 4★ weapon targeting R5 on the weapon banner', () => {
+    const weapon: Goal = { id: 'w', name: 'Weapon', kind: '5star_weapon', banner: 'weapon', targetId: 'chosen' };
+    const sword: Goal = { id: 's', name: 'Sword', kind: '4star_weapon', banner: 'weapon', targetId: 'w4a', targetLevel: 5 };
+    expectBreakdownsAgree([weapon, sword], 250, [40, 90, 160, 250]);
+  }, 60_000);
 });

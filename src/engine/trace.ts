@@ -1,22 +1,15 @@
 import { CR_MODELS } from './capturingRadiance';
+import { isFourStarKind, levelLabel, targetLevelOf } from './goalKinds';
 import { createRng } from './rng';
 import { buildTrialInfo, countClaimedRanks, isFiveStarClaimBlocked, stepOnePull, type TraceNote, type TrialInfo } from './simulate';
 import type { BannerKind, Goal, PullOutcome, SimulationInput, WeaponBannerState } from './types';
 
 /**
- * "Intent verification" tooling — a companion to invariants.test.ts, not a
- * replacement for it. Cross-validation (exactEngine.test.ts) and invariants
- * (invariants.test.ts) both tell you WHETHER the numbers are right; neither tells
- * you WHY the engine believes what it believes for a specific goal list. This
- * runs ONE concrete pull-by-pull playthrough — using `stepOnePull`, the exact
- * same per-pull logic `runSimulation` uses for its statistics, not a separate
- * reimplementation — and narrates it in plain language, so you can read the story
- * and judge "does this make sense for this priority?" the way you already do by
- * eyeballing the dev server, but without needing to actually add goals and wait.
- *
- * See FOCUS_RULES.md for the rules this is meant to help you check by eye, and
- * trace.test.ts for runnable examples (including the two user-reported bugs from
- * this session, as worked examples of what a real bug looks like in trace form).
+ * "Why does the engine believe this" tooling, complementing the numeric checks: runs ONE concrete
+ * pull-by-pull playthrough with `stepOnePull` — the same per-pull logic runSimulation uses, not a
+ * reimplementation — and narrates it in plain language, so you can judge whether the pulling order
+ * makes sense for a priority list. See FOCUS_RULES.md for the rules to check it against, and
+ * trace.test.ts / trace.survey.test.ts for examples. Also backs the app's trace panel.
  */
 
 export interface TraceStep {
@@ -58,26 +51,10 @@ export interface TraceRun {
 }
 
 /**
- * Capturing Radiance annotation for a character-banner 5★ pull — shows the REAL
- * pre→post counter transition for every such pull, not an inferred label.
- *
- * Earlier versions of this function tried to CATEGORIZE each pull ("organic",
- * "CR-triggered", "boosted win zone") by inferring from the pre-pull counter
- * alone, using logic hardcoded to Hypothesis A's specific r=2/r=3 rules. That was
- * wrong twice over, both found 2026-08-18: (1) it didn't check `guaranteed5`, so
- * a win that happened to be guaranteed (bypasses `crModel.resolve50_50` and
- * Capturing Radiance's own resolution entirely, carrying `crCounter` over
- * UNCHANGED) got mislabeled as a genuine CR-zone resolution whenever it
- * coincided with r=1/2/3 (reachable via a loss at r=0/1/2 respectively, which
- * always sets `guaranteed5=true` in that same transition); (2) even after fixing
- * that, the remaining r=2/r=3 labels were still hardcoded to Hypothesis A's
- * specific rules and produced byte-identical, misleading output when Hypothesis
- * B (a different model with different rules) was actually running the
- * simulation. Both problems disappear by not inferring/categorizing at all —
- * `postCrCounter` (the counter AFTER this pull, read directly off the real
- * resulting state, not guessed) already tells the whole story regardless of
- * which CR model or mechanic path produced it, so this just reports the raw
- * transition and lets the reader judge "does this make sense" themselves.
+ * Capturing Radiance annotation for a character-banner 5★ pull: the real pre→post counter
+ * transition, read off the resulting state rather than inferred — inferring a category ("organic",
+ * "CR-triggered") went wrong for guaranteed wins (which skip the 50/50 and keep the counter) and
+ * only fit Hypothesis A.
  */
 function crAnnotation(banner: BannerKind, preCrCounter: number, postCrCounter: number, preGuaranteed5: boolean, outcome: PullOutcome): string {
   if (banner !== 'character' || outcome.rarity !== 5) return '';
@@ -93,20 +70,9 @@ function crAnnotation(banner: BannerKind, preCrCounter: number, postCrCounter: n
 }
 
 /**
- * Weapon-banner annotation for a 5★ weapon pull — the weapon-side counterpart
- * to crAnnotation, showing the REAL fate-point / guaranteed5 story rather
- * than an inferred label, for the same reason: guessing from one flag alone
- * risks getting the two independent mechanics' interaction wrong. Added
- * 2026-08-19 at the user's request, after they flagged (correctly — see
- * weaponBanner.ts's transitionWeaponBanner doc comment) that the engine was
- * missing the standalone 75/25 "guaranteed featured" pity mechanic entirely,
- * conflating it with Epitomized Path Fate Points.
- *
- * `preWeaponState`/`postWeaponState` must be the state actually fed into
- * transitionWeaponBanner and the state it returned — i.e. `stepOnePull`'s
- * `weaponStateUsed`/`weaponState` — not whatever the caller's own `weaponState`
- * variable held BEFORE the call, since that may not yet reflect a phase-entry
- * fatePoints reset (see TrialInfo's resetFatePointsOnEntry).
+ * Weapon-banner annotation for a 5★ weapon pull: the real Fate Point / guaranteed5 transition, since
+ * the two mechanics interact (see weaponBanner.ts). `preWeaponState`/`postWeaponState` must be
+ * stepOnePull's `weaponStateUsed`/`weaponState` — the state after any phase-entry Fate Point reset.
  */
 function weaponAnnotation(banner: BannerKind, outcome: PullOutcome, preWeaponState: WeaponBannerState, postWeaponState: WeaponBannerState): string {
   if (banner !== 'weapon' || outcome.rarity !== 5) return '';
@@ -147,21 +113,12 @@ function describeOutcome(
   if (outcome.rarity === 3) return '3★';
   if (outcome.rarity === 4 && outcome.kind === 'standard') return '4★ (standard, not rate-up)';
   if (outcome.rarity === 5 && outcome.kind === 'standard') return `5★ (standard banner)${cr}${weaponCr}`;
-  // 5star_character matching is identity-agnostic (see CLAUDE.md's "Why 5★
-  // character goals ignore identity") — every 5star_character goal shares the
-  // SAME targetId (the banner's one config.featured5StarId), so looking one up
-  // by itemId here would always resolve to whichever such goal happens to be
-  // first in the list, misleadingly implying THAT one was the claimant even when
-  // a later-ranked goal actually claimed the win (the `notes` field, populated
-  // from the real bitmask diff, is what correctly names the actual claimant).
+  // 5★ character goals all share the banner's one featured id, so looking one up by itemId would
+  // name the first such goal even when a later one claimed the win — the notes name the claimant.
   if (outcome.rarity === 5 && outcome.kind === 'featured' && banner === 'character') return `5★ featured (the featured character)${cr}`;
   const matchedGoal = goals.find((g) => g.targetId === outcome.itemId);
   if (outcome.rarity === 4 && outcome.kind === 'featured') {
-    // Same identity-pool logic as the 5★-weapon case just above: the itemId is
-    // a REAL slot in the shared rate-up pool (see buildSimulationInput.ts's
-    // padding), but if it's one of the anonymous placeholder slots (nothing
-    // names it), showing the raw placeholder id (e.g. "other-4star-char-0")
-    // would be meaningless — labeled generically instead.
+    // Unnamed rate-up slots are placeholder ids (phases.ts's padIds); label them generically.
     return matchedGoal ? `4★ featured (${matchedGoal.name})` : '4★ featured (untracked rate-up slot)';
   }
   const itemLabel = matchedGoal?.name ?? outcome.itemId;
@@ -171,43 +128,13 @@ function describeOutcome(
 }
 
 /**
- * The naive "next incomplete goal by priority-list position" (`goals.findIndex`)
- * is the CORRECT concept for choosing which BANNER to pull on (matches
- * `stepOnePull`'s own real logic) — but is a MISLEADING "what are we pulling
- * toward" narration whenever that goal is a 4-star that doesn't actually gate
- * anything: 4-star accrual is opportunistic (governed by anchor windows, not
- * priority position), so an earlier-listed-but-non-blocking 4-star can sit
- * "next" in priority order for dozens of pulls while the banner's REAL
- * sequential target — the next unclaimed 5star_character rank in this phase,
- * per FIFO — is actually a LATER-listed goal. Found 2026-08-18 reviewing trace
- * output "would this make sense to an actual player": a real player pursuing
- * [Odette, Homa, Alyosha(anchored to both Odette+Miko), Miko] would say "I'm
- * pulling for Miko, picking up Alyosha's copies along the way" — not "I'm
- * focusing on Alyosha instead of Miko", even though Alyosha is listed first.
- * Confirmed this was PURELY a display concern, never a computation bug: the
- * real FIFO/anchor-gating logic (`fiveStarCharGoalIdsByPhase`) is built from
- * the 5-star goals' OWN relative order, independent of where any 4-star sits,
- * so Alyosha's list position never actually affected Miko's odds.
- *
- * MUST also account for `isFiveStarClaimBlocked` (found the same day, testing
- * this very fix): once Odette is won, if Alyosha is anchored to Odette ONLY
- * (not Miko too) and hasn't reached her own target, the next featured win is
- * NOT actually progressing toward Miko at all — it's blocked, absorbed as
- * another copy of Odette's own (already-claimed) rank, per FOCUS_RULES.md's
- * Rule B. A first version of this function ignored that and reported "Miko" as
- * primary the instant Odette was won, which is wrong in exactly the cases where
- * it matters most: a real player in this state would say "I'm stuck waiting on
- * Alyosha, haven't actually started on Miko yet" — so when blocked, the
- * BLOCKING 4-star becomes the primary name instead.
- *
- * UPDATE (2026-08-19, "4★ anchoring is phase-derived" fix): `naiveFocusIdx`'s
- * OWN NATAL phase is no longer a reliable source for "which phase are we
- * actually pulling toward" — a 4★'s resolved BLOCKING phase (see phases.ts's
- * resolveFourStarBlockingPhase) can now differ from where it's textually
- * positioned. `currentPhaseIndex` (computed the SAME way `stepOnePull` computes
- * its own real focus — see TrialInfo's blockingGoalIdsByPhase) is the actual
- * source of truth now; `naiveFocusIdx` is kept only to detect "also accruing"
- * (an earlier-listed, still-incomplete goal that isn't what's actually gating).
+ * What a player would say they're pulling toward. The phase comes from `currentPhaseIndex` (the same
+ * scan stepOnePull uses); within it, the primary name is the next unclaimed 5★ character rank — not
+ * the next incomplete goal by list position, since an earlier-listed 4★ that doesn't gate anything
+ * just accrues along the way ([Odette, Homa, Alyosha(→Odette+Miko), Miko]: "pulling for Miko,
+ * picking up Alyosha"). When isFiveStarClaimBlocked holds the next rank, the blocking 4★ is the
+ * primary name instead ("waiting on Alyosha"). `naiveFocusIdx` (next incomplete by position) only
+ * feeds the "also accruing" name. Display only — the odds never depend on this.
  */
 function computeFocusDisplayName(
   info: TrialInfo,
@@ -266,11 +193,7 @@ export function traceOneRun(input: SimulationInput, seed: number): TraceRun {
 
   for (let p = 1; p <= pullBudget; p++) {
     if (bitmask === info.fullMask) break;
-    // Mirrors stepOnePull's own phase-scan exactly (see TrialInfo's
-    // blockingGoalIdsByPhase doc comment and stepOnePull's own comment on why
-    // -1 is now believed unreachable for any real, validated goal list —
-    // twentieth-reported-bug follow-up, 2026-08-21 — kept as a defensive
-    // fallback, not a live path).
+    // Same phase scan as stepOnePull (-1 is defensive only).
     const currentPhaseIndex = info.blockingGoalIdsByPhase.findIndex((ids) => !ids.every((id) => (bitmask & (1 << info.goalIndexById.get(id)!)) !== 0));
     if (currentPhaseIndex === -1) break;
     const focusIdx = goals.findIndex((_, idx) => !(bitmask & (1 << idx)));
@@ -317,28 +240,11 @@ export interface FormattedTrace {
 }
 
 /**
- * Renders a TraceRun as a readable multi-line log, split into a short
- * `summary` (goal outcomes, meant to be read first) and the full `log`
- * (grouped into focus sections, each labeled with its pull range so a reader
- * can see how long a stretch took without counting lines). Consecutive pulls
- * with no effect AND no notable outcome (the overwhelming majority, since most
- * pulls are 3-stars or off-rate-up 4-stars) are collapsed into one summary
- * line instead of printed individually, so the log stays focused on the
- * decision points that actually matter for "does this make sense" review:
- * copies gained, goals completed, wins wasted/blocked, windows closed,
- * banner-focus changes, and every 5★ pull — even an off-banner one that
- * matches no tracked goal, since it's still what sets guaranteed5 / advances
- * the Capturing Radiance counter / grants a weapon Fate Point, and silently
- * hiding it is exactly what makes a later goal's "why did this take so many
- * extra pulls" hard to answer by eye.
- *
- * Split into `{ summary, log }` (2026-08-19, at the user's request — "this is
- * hell to sift through") instead of one long string, specifically so a UI
- * consumer (TracePanel.tsx) can show the summary immediately and put the much
- * longer pull-by-pull log behind its own collapsible disclosure, rather than
- * making a reader scroll through hundreds of lines just to see whether a goal
- * finished. Both pieces are shared between the live trace panel and this
- * file's own test-suite console output — a fix here improves both surfaces.
+ * Formats a run as `{ summary, log }`: the summary is when each goal finished; the log is sectioned
+ * by focus, with consecutive no-effect, non-notable pulls collapsed into one line so the decision
+ * points stand out — copies gained, goals done, wins wasted/blocked, windows closed, focus changes,
+ * and every 5★ (even an untracked one: it still sets guaranteed5, moves the CR counter or grants a
+ * Fate Point). Split so the trace panel can show the summary and tuck the long log away.
  */
 export function formatTrace(run: TraceRun, goals: Goal[]): FormattedTrace {
   const summaryLines: string[] = [];
@@ -349,16 +255,9 @@ export function formatTrace(run: TraceRun, goals: Goal[]): FormattedTrace {
     summaryLines.push(`  ${goal.name}: ${donePull !== undefined ? `done at pull ${donePull}` : 'not done within budget'}`);
   }
 
-  // Group consecutive steps sharing one "focus key" (banner + which goal
-  // we're actually working toward together) into sections, so each section's
-  // header can show its real pull range — computed via this first pass,
-  // rather than printed incrementally, since the range's END isn't known
-  // until the section is over. Banner alone isn't enough to key a section:
-  // the real focus can shift WITHIN one continuous same-banner run too (e.g.
-  // once a 5-star is won, or once a blocking 4-star catches up), with no
-  // banner-switch to hang a new header off of — missing that transition
-  // entirely was a real gap found 2026-08-18 while checking whether this
-  // narration would make sense to an actual player.
+  // Sections of consecutive steps with the same focus (banner + focus goal + also-accruing goal),
+  // built in a first pass so each header can show its pull range. Banner alone isn't enough: focus
+  // can shift within one same-banner run (a 5★ is won, a blocking 4★ catches up).
   interface Section {
     banner: string;
     focusGoalName: string;
@@ -423,26 +322,17 @@ export function formatTrace(run: TraceRun, goals: Goal[]): FormattedTrace {
 }
 
 /**
- * Renders a goal list as a plain priority-order roster — {rarity}★ {banner}
- * {name}, plus target level/anchors for 4-stars and explicit window-linking
- * status for 5star_weapon goals — so a reader can see at a glance what a goal
- * list actually is without reverse-engineering it from formatTrace's pull-by-
- * pull narration. Originally lived only in trace.survey.test.ts; moved here
- * (2026-08-19, at the user's request) so the same formatting is available to a
- * live "generate a trace" UI feature, not just the test suite — every
- * 5star_weapon goal explicitly states its window-linking status (not just when
- * linked) because it applies to every weapon goal, and the whole point is being
- * able to verify the pulling sequence for ANY goal list at a glance, not just
- * ones a scenario author already knows are linked.
+ * The goal list as a plain priority-order roster — {rarity}★ {banner} {name}, target level and
+ * anchors for 4★s, and window-linking status for every 5★ weapon — so the trace can be read
+ * against the list it came from.
  */
 export function formatGoalRoster(goals: Goal[]): string {
   const nameById = new Map(goals.map((g) => [g.id, g.name]));
   const lines = goals.map((g, i) => {
     const rarity = g.kind.startsWith('5star') ? '5' : '4';
     let line = `  ${i + 1}. ${rarity}★ ${g.banner} ${g.name}`;
-    if (g.kind === '4star_character' || g.kind === '4star_weapon') {
-      const levelLabel = g.kind === '4star_character' ? `C${g.targetLevel ?? 0}` : `R${g.targetLevel ?? 1}`;
-      line += ` (target ${levelLabel}`;
+    if (isFourStarKind(g.kind)) {
+      line += ` (target ${levelLabel(g.kind, targetLevelOf(g))}`;
       if (g.anchoredFiveStarGoalIds?.length) {
         line += `, anchored to: ${g.anchoredFiveStarGoalIds.map((id) => nameById.get(id) ?? id).join(', ')}`;
       }
