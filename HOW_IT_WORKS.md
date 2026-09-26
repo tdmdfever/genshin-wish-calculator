@@ -4,7 +4,7 @@ Everything this Genshin Impact wish calculator does — starting from what a "wi
 
 This is a plain-Markdown copy of a longer, illustrated version published as a Claude Artifact during development — diagrams and interactive styling live only in that version, but every word of prose, every formula, and every citation below is the same. See [ARCHITECTURE.md](ARCHITECTURE.md) for the shorter, structural-only reference this document expands on, and [CHANGELOG.md](CHANGELOG.md) for the full dated history behind any specific design decision.
 
-**Legend:** 🟡 character banner / 5★ mechanics · 🟣 weapon banner / 4★ mechanics · citations like `file.ts:12` point into the actual source.
+**Legend:** 🟡 character banner / 5★ mechanics · 🟣 weapon banner / 4★ mechanics · citations like `file.ts · name` point into the actual source.
 
 ## How to read this document
 
@@ -24,7 +24,7 @@ Everything in this part is genuine Genshin Impact game mechanics — the rules t
 
 In Genshin Impact, spending an in-game currency to draw a random character or weapon is called making a **wish** — everyone else calls this a gacha "pull," and this document uses the two words interchangeably. Each wish returns exactly one item, and every item has a **rarity**: 3★ (common — some minor material, not tracked as a goal by anyone), 4★ (uncommon — a real character or weapon), or 5★ (rare — the flashiest characters and weapons, and usually what people are actually chasing).
 
-This calculator only cares about 4★ and 5★ outcomes, because those are the ones with rate-ups and pity attached. A 3★ pull is, for probability-tracking purposes, simply "nothing happened" — the underlying code literally represents it as a bare `{rarity: 3}` outcome with no further detail. `characterBanner.ts:99-113`.
+This calculator only cares about 4★ and 5★ outcomes, because those are the ones with rate-ups and pity attached. A 3★ pull is, for probability-tracking purposes, simply "nothing happened" — the underlying code literally represents it as a bare `{rarity: 3}` outcome with no further detail. `characterBanner.ts · 3★ branch`.
 
 ## I.2 The two Event Wish banners
 
@@ -41,9 +41,9 @@ If every pull's 5★ chance were a flat, tiny percentage forever, a genuinely un
 
 The 5★ pity curve has three parts: a long flat stretch at a small base rate, then a "soft pity" ramp where the rate climbs fast, then a hard ceiling where a 5★ becomes mathematically guaranteed no matter what.
 
-Concretely, on the **character banner**: every pull has a flat **0.6%** chance of a 5★ for the first 73 pulls since your last one. From pull 74 on, that chance climbs by 6 percentage points per pull. By pull 90, if you somehow still haven't hit one, the game simply guarantees it — that pull *is* a 5★, 100% of the time. The **weapon banner** runs the same shape on a shorter fuse: 0.7% base rate, soft pity starting at pull 63, hard pity at pull 80.
+Concretely, on the **character banner**: every pull has a flat **0.6%** chance of a 5★ for the first 73 pulls since your last one. From pull 74 on, that chance climbs by 6 percentage points per pull. By pull 90, if you somehow still haven't hit one, the game simply guarantees it — that pull *is* a 5★, 100% of the time. The **weapon banner** runs the same shape on a shorter fuse: 0.7% base rate, soft pity starting at pull 63 (+7 points per pull), and a guaranteed 5★ by pull 77. (The in-game description says 80, but measured pull data shows the rate already reaches 100% at 77.)
 
-4★s get the same idea on a much shorter leash — flat at 5.1% for 8 pulls, then a big single jump to 56.1% on the 9th pull, guaranteed by the 10th. Because 4★s are common to begin with, most players never consciously notice this kicking in — it "catches" virtually everyone within about 9 or 10 pulls without a 4★.
+4★s get the same idea on a much shorter leash — on the character banner, flat at 5.1% for 8 pulls, then a big single jump to 56.1% on the 9th pull, guaranteed by the 10th. The weapon banner's 4★s run a little hotter: 6% for 7 pulls, 66% on the 8th, guaranteed by the 9th. Because 4★s are common to begin with, most players never consciously notice this kicking in — it "catches" virtually everyone within about 9 or 10 pulls without a 4★.
 
 *(Both curves are flat at a tiny base rate for a long stretch, then ramp steeply upward once soft pity kicks in — by design, you almost never actually feel the full brunt of the theoretical worst case, because the odds are already climbing well before the hard ceiling. Character hard pity: pull 90. Weapon hard pity: pull 80.)*
 
@@ -105,7 +105,7 @@ Odette(char) ──────► Weapon(weapon) ──────► Alyosha(
   Focus period 1        Focus period 2         Focus period 3 — same banner, merged
 ```
 
-A priority list of "Odette, then a weapon, then Alyosha, then Miko" breaks into three focus periods — the last one covering both Alyosha and Miko together, since they're adjacent on the same banner. Every pull inside that last period is checked against *both* goals at once: Alyosha can pick up copies even while pulls are technically being spent chasing Miko.
+A priority list of "Odette, then a weapon, then Alyosha, then Miko" breaks into three focus periods — the last one covering both Alyosha and Miko together, since they're adjacent on the same banner (with Alyosha marked as featured alongside Miko — left unset, with two 5★ characters listed, she'd be "disconnected" and get a focus period of her own; see III.8). Every pull inside that last period is checked against *both* goals at once: Alyosha can pick up copies even while pulls are technically being spent chasing Miko.
 
 ---
 
@@ -147,7 +147,7 @@ So instead of tracking both banners together for the whole goal list, the engine
 
 # Part III — Under the hood: the exact-DP engine
 
-Everything below is derived directly from `src/engine/`, with a citation into the exact file and lines behind every formula. Each subsection opens with a plain-language recap tying it back to Part I/II before formalizing it.
+Everything below is derived directly from `src/engine/`, with a citation into the exact file and function behind every formula. Each subsection opens with a plain-language recap tying it back to Part I/II before formalizing it.
 
 ## III.1 Module map
 
@@ -160,6 +160,7 @@ graph TB
     codec["stateCodec.ts"]
     charB["characterBanner.ts"]:::gold
     weapB["weaponBanner.ts"]:::violet
+    goalK["goalKinds.ts"]
     goalT["goalTracking.ts"]
     phaseDp["phaseDp.ts"]
     phases["phases.ts"]
@@ -174,6 +175,7 @@ graph TB
     codec --> phaseDp
     charB --> phaseDp
     weapB --> phaseDp
+    goalK --> goalT
     goalT --> phaseDp
     phases --> exact
     phaseDp --> exact
@@ -185,14 +187,15 @@ graph TB
     classDef engine fill:#F3E7CB,stroke:#8A5F0C,stroke-width:2px;
 ```
 
-Solid arrows are real imports; the dashed line is the test-only cross-validation relationship. `simulate.ts` independently re-derives banner focus per pull rather than pre-computing phases — it shares `goalTracking.ts`'s semantics but not `phases.ts` itself, which is why the two engines are cross-checked rather than merged.
+Solid arrows are real imports; the dashed line is the test-only cross-validation relationship. `simulate.ts` samples one pull at a time instead of propagating probabilities: it builds the same phases with `phases.ts`, but matches outcomes to goals with its own independent re-implementation of `goalTracking.ts`'s rules — which is why the two engines are cross-checked rather than merged.
 
 | module | role |
 |---|---|
-| `pity.ts` | The three piecewise pull-rate curves from Part I.3 — pure functions of pull-count-since-last-hit. |
+| `pity.ts` | The piecewise pull-rate curves from Part I.3 (5★ and 4★, per banner) — pure functions of pull-count-since-last-hit. |
 | `capturingRadiance.ts` | Part I.6's two competing hypotheses for the post-loss-streak boost, formalized. |
 | `characterBanner.ts` / `weaponBanner.ts` | Exhaustive (probability, outcome, next state) branch lists for one pull — Part I.4–I.7's rules, as code. |
 | `stateCodec.ts` | Packs a banner state into one integer, for array indexing instead of hashing. |
+| `goalKinds.ts` | Per-kind rules shared by the engine and UI: copies needed for a C/R level, default levels, labels, anchor limits. |
 | `goalTracking.ts` | The phase-local vs. persistent goal-progress state machine, shared by both engines. |
 | `phases.ts` | Pure function of the goal list alone: groups goals into phases (Part II.4's idea, formalized). |
 | `phaseDp.ts` | The exact DP for one phase — the "slice" restructuring lives here. |
@@ -200,9 +203,9 @@ Solid arrows are real imports; the dashed line is the test-only cross-validation
 
 ## III.2 Pity curves, formalized
 
-This is Part I.3's rate chart, written as exact piecewise functions of $n$, the 1-indexed pull count since the last hit of that rarity. `pity.ts` — three pure functions, nothing stateful; every other module calls these with whatever counter it's tracking.
+This is Part I.3's rate chart, written as exact piecewise functions of $n$, the 1-indexed pull count since the last hit of that rarity. `pity.ts` — four pure functions, nothing stateful; every other module calls these with whatever counter it's tracking.
 
-**Character 5★ rate** (`pity.ts:2-6`):
+**Character 5★ rate** (`pity.ts · char5Rate`):
 
 $$
 p_5^{char}(n) = \begin{cases} 0.006 & n \le 73 \\ 0.006 + 0.06(n-73) & 74 \le n \le 89 \\ 1 & n \ge 90 \end{cases}
@@ -215,16 +218,16 @@ char5Rate(81) = 0.006 + 0.06 × (81 − 73)
               = 0.006 + 0.06 × 8 = 0.486   // 48.6%, up from a 0.6% base rate
 ```
 
-**Weapon 5★ rate** (`pity.ts:9-13`) — a shorter, steeper ramp: soft pity starts at 63 and hard pity is 80, ten pulls earlier than the character banner's 90.
+**Weapon 5★ rate** (`pity.ts · weapon5Rate`) — a shorter, steeper ramp: soft pity starts at 63 and a 5★ is certain by 77 (the in-game text says 80; measured data from GGanalysis says 77), thirteen pulls earlier than the character banner's 90.
 
 $$
-p_5^{weapon}(n) = \begin{cases} 0.007 & n \le 62 \\ 0.007 + \dfrac{0.993}{18}(n-62) & 63 \le n \le 79 \\ 1 & n \ge 80 \end{cases}
+p_5^{weapon}(n) = \begin{cases} 0.007 & n \le 62 \\ 0.007 + 0.07(n-62) & 63 \le n \le 76 \\ 1 & n \ge 77 \end{cases}
 $$
 
-**4★ rate, shared by both banners** (`pity.ts:16-20`) — a single-value jump at exactly pull 9, not a ramp, then flat certainty from 10 on. This flatness is what licenses capping the stored `pity4` digit at 9 in the state encoding (III.6): once $n\ge10$ the rate never changes again, so nothing distinguishes $n=10$ from $n=11$.
+**4★ rates** (`pity.ts`'s `char4Rate` / `weapon4Rate`) — a single-value jump, not a ramp, then flat certainty: on the character banner the jump is at pull 9 with certainty from 10; the weapon banner's base rate is higher (6.0%, the official figure, vs 5.1%) and it jumps one pull earlier. This flatness is what licenses capping the stored `pity4` digit at 9 in the state encoding (III.6): once $n\ge10$ neither rate ever changes again, so nothing distinguishes $n=10$ from $n=11$.
 
 $$
-p_4(n) = \begin{cases} 0.051 & n \le 8 \\ 0.561 & n = 9 \\ 1 & n \ge 10 \end{cases}
+p_4^{char}(n) = \begin{cases} 0.051 & n \le 8 \\ 0.561 & n = 9 \\ 1 & n \ge 10 \end{cases} \qquad p_4^{weapon}(n) = \begin{cases} 0.06 & n \le 7 \\ 0.66 & n = 8 \\ 1 & n \ge 9 \end{cases}
 $$
 
 ## III.3 Capturing Radiance, formalized
@@ -240,7 +243,7 @@ Part I.6 introduced Capturing Radiance as "the game boosts you after repeated 50
 | 2 | min(0.5,w) normal + (w−min(0.5,w)) CR, r→1 | 1−w → loss, r→3 |
 | 3 | 1.0 → win_capturing_radiance, r→1 | — |
 
-$w$ = `r2TotalWinRate`, default **0.55**, user-adjustable — the *total* win probability at $r=2$, split into an organic 50% "normal" portion and a $w-0.5$ "Capturing Radiance" portion once $w>0.5$. `capturingRadiance.ts:13-42`. Worked example: after two straight 50/50 losses (arriving at $r=2$ for your third 5★ this streak), your win chance jumps from the base 50% to the full 55% — 50 points "normal" plus a 5-point Capturing Radiance kicker. Cross-checked against the community project HuTaoSite's independent implementation.
+$w$ = `r2TotalWinRate`, default **0.55**, user-adjustable — the *total* win probability at $r=2$, split into an organic 50% "normal" portion and a $w-0.5$ "Capturing Radiance" portion once $w>0.5$. `capturingRadiance.ts · hypothesisA`. Worked example: after two straight 50/50 losses (arriving at $r=2$ for your third 5★ this streak), your win chance jumps from the base 50% to the full 55% — 50 points "normal" plus a 5-point Capturing Radiance kicker. Cross-checked against the community project HuTaoSite's independent implementation.
 
 **Hypothesis B — flatter curve, earlier onset:**
 
@@ -248,7 +251,7 @@ $$
 \text{win\_rate}(r) = 0.5 + 0.5 \cdot c_r, \quad c \in \{0,\ 0.05,\ 0.5,\ 1\} \tag{1}
 $$
 
-So win rates are exactly **{50%, 52.5%, 75%, 100%}** for $r=0\ldots3$. Any win — at any $r$ — resets fully to 0; a loss advances $r$ by 1, capped at 3. `capturingRadiance.ts:44-65`.
+So win rates are exactly **{50%, 52.5%, 75%, 100%}** for $r=0\ldots3$. Any win — at any $r$ — resets fully to 0; a loss advances $r$ by 1, capped at 3. `capturingRadiance.ts · hypothesisB`.
 
 > **Not collapsed into one "true" model.** The two hypotheses are kept genuinely separate throughout the engine rather than averaged or defaulted silently — the uncertainty here is real, not an engineering shortcut. Hypothesis A is the endorsed default, confirmed to match community 4M-pull analyses and the app author's own long-standing mental model.
 
@@ -258,7 +261,7 @@ This is Part I.4 and I.5's rules — the 50/50, the guarantee, the 4★ mini-gua
 
 Let $p_5$ = char5Rate(pity5+1), $p_4$ = char4Rate(pity4+1). The pull resolves in strict priority: 5★ first, then 4★ conditional on no 5★, then 3★/nothing conditional on neither.
 
-**5★ branch — mass $p_5$** (`characterBanner.ts:29-63`):
+**5★ branch — mass $p_5$** (`characterBanner.ts · 5★ branch`):
 
 $$
 \begin{aligned}
@@ -271,7 +274,7 @@ On a loss, `guaranteed5'` becomes true (the classic 50/50-loss guarantee). Eithe
 
 Worked example: pull 81, not guaranteed, hypothesis A at $r=0$. $p_5$ = 48.6% (III.2's calculation above). That mass splits down the middle: 24.3% this exact pull is the featured 5★, 24.3% it's a standard 5★ (and you become guaranteed), and the remaining 51.4% isn't a 5★ at all this pull.
 
-**4★ branch — mass $(1-p_5)\cdot p_4$** (`characterBanner.ts:65-97`). Reached only on the complementary event "not a 5★ this pull." Mirrors the 5★ branch's own guarantee structure one rarity tier down (Part I.5):
+**4★ branch — mass $(1-p_5)\cdot p_4$** (`characterBanner.ts · 4★ branch`). Reached only on the complementary event "not a 5★ this pull." Mirrors the 5★ branch's own guarantee structure one rarity tier down (Part I.5):
 
 $$
 \begin{aligned}
@@ -282,13 +285,13 @@ $$
 
 $n$ = `config.featured4StarIds.length` — always padded to **3** real-or-placeholder slots per phase (III.8), matching the real 3-character rate-up roster from Part I.5.
 
-**Remainder — mass $(1-p_5)(1-p_4)$** (`characterBanner.ts:99-113`). A plain 3★/nothing pull: `pity5' = pity5+1`, `pity4' = min(pity4+1, 9)`, every guarantee flag unchanged.
+**Remainder — mass $(1-p_5)(1-p_4)$** (`characterBanner.ts · 3★ branch`). A plain 3★/nothing pull: `pity5' = pity5+1`, `pity4' = min(pity4+1, 9)`, every guarantee flag unchanged.
 
 ## III.5 Weapon banner — per-pull transition
 
 This formalizes Part I.5 and I.7: the weapon banner's own 75/25, and Epitomized Path's Fate Points layered on top of it. No Capturing Radiance here (character-banner-only). State is `(pity5, guaranteed5, fatePoints, pity4, guaranteed4)`.
 
-Let $p_5$ = weapon5Rate(pity5+1), $p_4$ = char4Rate(pity4+1). The 5★ branch is a three-way priority cascade (`weaponBanner.ts:45-84`):
+Let $p_5$ = weapon5Rate(pity5+1), $p_4$ = weapon4Rate(pity4+1). The 5★ branch is a three-way priority cascade (`weaponBanner.ts · 5★ branch`):
 
 $$
 \begin{aligned}
@@ -302,7 +305,7 @@ A fate point **fully overrides** the guarantee (6) regardless of what `guarantee
 
 > **Why the 37.5/37.5/25 split is invisible mid-phase.** A standard-5★ roll (8) grants a fate point in the *same* pull that would otherwise need it — so within one phase, whether that pull happened via (7) or (8) has no observable difference going forward. It only becomes observable across a phase boundary: `fatePoints` resets to 0 for a new weapon-banner phase (a fresh Epitomized Path selection) while `guaranteed5` carries over — so the new phase's first 5★ is a fresh 50/50 between its own chosen/other identities, informed by a guarantee earned under the old phase's completely different selection.
 
-**4★ branch — mass $(1-p_5)\cdot p_4$** (`weaponBanner.ts:86-121`):
+**4★ branch — mass $(1-p_5)\cdot p_4$** (`weaponBanner.ts · 4★ branch`):
 
 $$
 \begin{aligned}
@@ -328,12 +331,12 @@ and decoding peels off digits from the *least*-significant end via repeated mod/
 | banner | digit order (most→least significant) | modulus |
 |---|---|---|
 | character | pity5(90) × guaranteed5(2) × crCounter(4) × pity4(10) × guaranteed4(2) | 14,400 |
-| weapon | pity5(80) × guaranteed5(2) × fatePoints(2) × pity4(10) × guaranteed4(2) | 6,400 |
+| weapon | pity5(77) × guaranteed5(2) × fatePoints(2) × pity4(10) × guaranteed4(2) | 6,160 |
 
 Worked example (character banner): pity5=5, guaranteed5=false, crCounter=1, pity4=3, guaranteed4=false.
 `code = (((5×2+0)×4+1)×10+3)×2+0 = ((10×4+1)×10+3)×2 = (41×10+3)×2 = 413×2 = 826` — one integer, unambiguously reversible back to those five original numbers.
 
-`pity4` is capped at 9 by both transition functions — **lossless**, since the 4★ rate is flat at 100% for any $n \ge 10$ (III.2), so no future rate lookup can ever distinguish 9 from any larger value. `pity5` needs no such cap: it's naturally bounded by each banner's own hard pity (90 / 80). Without the `pity4` cap the encoding would be unbounded, since a long run of consecutive 5★ pulls can in principle push the 4★ counter arbitrarily high while never triggering a 4★-rate lookup that would reveal it's overflowed.
+`pity4` is capped at 9 by both transition functions — **lossless**, since the 4★ rate is flat at 100% for any $n \ge 10$ (III.2), so no future rate lookup can ever distinguish 9 from any larger value. `pity5` needs no such cap: it's naturally bounded by each banner's own hard pity (90 / 77). Without the `pity4` cap the encoding would be unbounded, since a long run of consecutive 5★ pulls can in principle push the 4★ counter arbitrarily high while never triggering a 4★-rate lookup that would reveal it's overflowed.
 
 **The persistent goal-tracking vector reuses the same technique**, but its `dims` array is *derived from the goal list*, not a fixed constant: one radix-2 slot per distinct `5star_weapon` target id (obtained / not), then one slot per named 4★ goal sized `maxCopies+1` — **8** for character (C0–C6, i.e. 0–7 copies, Part I.8) and **6** for weapon (R1–R5, 0–5 copies). This is exactly why `PersistentSpec` isn't appendable (III.7): adding a goal changes the `dims` array itself, not just what's stored at an existing index.
 
@@ -355,7 +358,7 @@ The split exists because character-banner 5★ matching is **identity-agnostic**
 
 So the same numerical goal list can produce genuinely different odds for Miko, depending purely on which 5★s a same-phase 4★ is said to be "riding along with." This is the single trickiest gate in the whole engine, and it's exactly what the next two formulas encode.
 
-**Same-phase 5★ blocking** — `isNextFiveStarClaimBlocked` (`goalTracking.ts:126-171`):
+**Same-phase 5★ blocking** — `isNextFiveStarClaimBlocked` (`goalTracking.ts · isNextFiveStarClaimBlocked`):
 
 $$
 \text{blocked} \iff \exists\ 4\bigstar\ g \text{ in this phase}:\ \text{nextGoalId} \notin \text{anchors}(g)\ \land\ \text{every other anchor}(g)\text{ already resolved}\ \land\ \text{copies}(g) < \text{target}(g)+1 \tag{12}
@@ -363,7 +366,7 @@ $$
 
 This single predicate is what makes "Alyosha anchored to Odette only" behaviorally different from "Alyosha anchored to both" — without it, the two configurations above would be numerically indistinguishable.
 
-**Window opening** — `isFourStarWindowOpenInPhase` (`goalTracking.ts:201-235`). The current "focus rank" within a phase is `phaseVector[0]+1` (the next unclaimed rank) — unless (12) is blocking it, in which case focus is still pinned to the *last claimed* rank. A same-phase-anchored 4★ only accrues copies while the current focus rank is one of its own anchors — so a 4★ anchored to a phase's *later* 5★ does not start accruing from pull 1 just because it shares the phase; it waits until focus genuinely reaches that rank.
+**Window opening** — `isFourStarWindowOpenInPhase` (`goalTracking.ts · isFourStarWindowOpenInPhase`). The current "focus rank" within a phase is `phaseVector[0]+1` (the next unclaimed rank) — unless (12) is blocking it, in which case focus is still pinned to the *last claimed* rank. A same-phase-anchored 4★ only accrues copies while the current focus rank is one of its own anchors — so a 4★ anchored to a phase's *later* 5★ does not start accruing from pull 1 just because it shares the phase; it waits until focus genuinely reaches that rank.
 
 **Cross-phase closing** — `computeClosedFourStarGoalIdsForPhase`. For phase index $p$ and a persistent 4★'s anchor phase range $[\min, \max]$:
 
@@ -371,7 +374,7 @@ $$
 \text{closed}(p) \iff p < \min \ \lor\ (p > \max \land p \ne \text{natal phase}) \tag{13}
 $$
 
-$p < \min$: none of the anchors have happened yet, so this item structurally isn't on phase $p$'s real-world rate-up roster at all. $p > \max$: every anchor is guaranteed already resolved (a phase can't graduate without its own goals — anchors included — being satisfied), *except* when $p$ is the 4★'s own blocking phase, which must stay open regardless of where it falls relative to its anchors (see III.8's `resolveFourStarBlockingPhase`).
+$p < \min$: none of the anchors have happened yet, so this item structurally isn't on phase $p$'s real-world rate-up roster at all. $p > \max$: every anchor is guaranteed already resolved (a phase can't graduate without its own goals — anchors included — being satisfied), *except* the 4★'s own natal phase (the one it sits in), which stays open regardless of where it falls relative to its anchors — e.g. a phase that exists only to chase her after a detour (see III.8's `resolveFourStarBlockingPhase`).
 
 ## III.8 Phase decomposition
 
@@ -390,15 +393,15 @@ $$
 \text{blockingPhase}(g) = \begin{cases} \text{natalPhase}(g) & \text{if natalPhase}(g) \in \text{anchors}(g) \\ \max\big(\text{natalPhase}(g),\ \max\{\text{phase}(a) : a \in \text{anchors}(g)\}\big) & \text{otherwise} \end{cases} \tag{14}
 $$
 
-**Never the anchor alone, and never unconditionally the latest anchor either.** When a 4★'s own natal phase genuinely is one of her named anchors, she blocks *there* — holding up that phase's own graduation, just like any native member would — rather than always deferring to whichever anchor happens to be latest. Only when the natal phase isn't a real anchor window for her at all does she become a non-blocking "passenger," riding through phases before her true anchor's phase — accruing copies without holding anything up — while her real completion odds are computed against the phase that actually gates her (`phases.ts:298-320`). This is also the mechanism that feeds the "side-track" bridging in III.10 — a 4★ whose blocking phase differs from every phase it textually sits inside needs its own resolution machinery, since no single phase's `localPrefixDone` array can already know about it.
+**Never the anchor alone, and never unconditionally the latest anchor either.** When a 4★'s own natal phase genuinely is one of her named anchors, she blocks *there* — holding up that phase's own graduation, just like any native member would — rather than always deferring to whichever anchor happens to be latest. Only when the natal phase isn't a real anchor window for her at all does she become a non-blocking "passenger," riding through phases before her true anchor's phase — accruing copies without holding anything up — while her real completion odds are computed against the phase that actually gates her (`phases.ts · resolveFourStarBlockingPhase`). This is also the mechanism that feeds the "side-track" bridging in III.10 — a 4★ whose blocking phase differs from every phase it textually sits inside needs its own resolution machinery, since no single phase's `localPrefixDone` array can already know about it.
 
 > **Why this needed a second fix alongside it.** Blocking on the natal phase only solves half of it. Say Odette and Miko are explicitly **linked** (Part I.9's "simultaneous banners") but split apart by an interleaved weapon-banner detour, and a 4★ is anchored to both. Once Odette's own phase correctly holds open past her claim (per (14) above), an *extra* featured win landing during that hold-up has nowhere to go — Odette's own phase only knows about Odette's own rank, and Miko lives in a completely separate `Phase` object. A real player would expect that extra win to roll over onto Miko's still-open slot, not vanish. III.10's "character window" mechanism is the other half of this fix — see there for how the phase-local FIFO code survives exactly this kind of detour.
 
 ## III.9 The per-phase exact DP
 
-Part II.4 promised that each phase gets "its own compact, single-banner problem." This is that problem, solved. `phaseDp.ts`'s `runPhaseDp` — given a normalized starting distribution over (banner substate, persistent vector), propagates probability mass pull by pull until either every phase goal is satisfied (mass "graduates" into `exitSubstateDist`) or the phase's local pull budget is exhausted.
+Part II.4 promised that each phase gets "its own compact, single-banner problem." This is that problem, solved. `phaseDp.ts`'s `runPhaseDp` — given a normalized starting distribution over (banner substate, persistent vector, phase-local FIFO code), propagates probability mass pull by pull until either the phase's blocking goals are all satisfied (mass "graduates" into `exitSubstateDist`) or the phase's local pull budget is exhausted.
 
-**State space.** Three coordinates travel together: the banner substate code $b$ (III.6, bounded — 14,400 or 6,400 values), the persistent code $c$ (goal copies/flags, banner-wide), and the phase-local code $f$ (the same-phase 5★ FIFO counter from III.7, resets to 0 on entry). A pair $(c,f)$ is called a **slice**; each slice owns one dense `Float64Array` indexed by $b$.
+**State space.** Three coordinates travel together: the banner substate code $b$ (III.6, bounded — 14,400 or 6,160 values), the persistent code $c$ (goal copies/flags, banner-wide), and the phase-local code $f$ (the same-phase 5★ FIFO counter from III.7 — reset to 0 on entry, except across a split linked window, III.10). A pair $(c,f)$ is called a **slice**; each slice owns one dense `Float64Array` indexed by $b$.
 
 **The factorization that makes it tractable.** A pull's effect on $(c,f)$ — via `updateGoalTracking`/`isGoalDone` — depends **only on which outcome shape occurred** (rarity + kind + item id), never on $b$. The banner-transition side (III.4/III.5) depends only on $b$. So for a fixed slice, the (small, fixed) set of possible outcome shapes $\Omega$ — always exactly 7 (character banner: 4 base shapes + 3 padded 4★-character slots) or 10 (weapon banner: 5 base shapes + 5 padded 4★-weapon slots), from `enumerateOutcomeShapes` — has its goal-tracking result computed **once**, then every $b$ in that slice just looks the result up and does array arithmetic:
 
@@ -406,7 +409,7 @@ $$
 M_{l+1}[b'; c',f'] \mathrel{+}= \sum_{\substack{(b,\omega):\ \tau_B(b,\omega)=b',\\ \tau_G(c,f,\omega)=(c',f')}} M_l[b;\,c,f]\cdot\pi(b,\omega) \tag{15}
 $$
 
-where $\tau_B(b,\omega)$ is the banner's own next-state function and $\tau_G(c,f,\omega)$ is goal-tracking's — the two never interact. Before this restructuring, every $(b,c,f)$ triple re-derived the goal-tracking result independently; since $b$ ranges over thousands of values, that repeated the same handful of possible results thousands of times over. This is documented as the single biggest performance lever in the engine — the difference between "solves instantly" and "times out," for the exact same math. `phaseDp.ts:279-326`.
+where $\tau_B(b,\omega)$ is the banner's own next-state function and $\tau_G(c,f,\omega)$ is goal-tracking's — the two never interact. Before this restructuring, every $(b,c,f)$ triple re-derived the goal-tracking result independently; since $b$ ranges over thousands of values, that repeated the same handful of possible results thousands of times over. This is documented as the single biggest performance lever in the engine — the difference between "solves instantly" and "times out," for the exact same math. `phaseDp.ts · runPhaseDp`.
 
 Picture two example "slices," each a dense array over banner substate — a 4★-featured outcome moves every cell in slice one to the same new $(c',f')$ in slice two (computed once per slice per outcome shape, then applied as array arithmetic), while a different outcome instead satisfies every phase goal and exits that cell's mass to `exitSubstateDist`. That's the entire point of the slice restructuring: one slice's goal-tracking transition is computed once and then swept across every banner substate as pure array arithmetic.
 
@@ -431,11 +434,11 @@ $$
 \text{convolve}(\text{density}, \text{cumMetric})[N] = \sum_{t=0}^{N} \text{density}[t] \cdot \text{cumMetric}[N-t] \tag{16}
 $$
 
-`exactEngine.ts:44-56`. One function, two uses: (a) aligning a phase's own local cumulative metric onto the global axis, weighted by *when* the phase was actually entered; (b) advancing the running **arrival density** itself — the distribution over "phase $p+1$ is entered at exactly global pull $\tau$" — by convolving two independent waiting-time distributions, exactly the standard fact that the sum of two independent nonnegative random variables has a pmf equal to the convolution of their own pmfs.
+`exactEngine.ts · convolve`. One function, two uses: (a) aligning a phase's own local cumulative metric onto the global axis, weighted by *when* the phase was actually entered; (b) advancing the running **arrival density** itself — the distribution over "phase $p+1$ is entered at exactly global pull $\tau$" — by convolving two independent waiting-time distributions, exactly the standard fact that the sum of two independent nonnegative random variables has a pmf equal to the convolution of their own pmfs.
 
 **Handoff on banner reoccurrence.** When a later phase reuses a banner, its `startDist` is the earlier phase's own `exitSubstateDist`, **normalized** (divided by its own total mass) — a conditional distribution: *given* this phase eventually graduates within its own local horizon, what's the substate distribution at the moment it does. Weapon Fate Points are reset to 0 on this handoff unless the reoccurring phase's own weapon goal is explicitly linked to the one it's carrying over from (III.8) — a genuinely continuous Epitomized Path window, not a new selection.
 
-> **Where the documented time-marginalization residual comes from.** This normalization step is exact for the arrival-time distribution itself, but it applies *one averaged* substate distribution uniformly regardless of *when* a given trial actually graduated. That's fine when nothing extends a phase past its natural pity/CR reset point — but a phase-extending mechanism (a same-phase-anchored 4★ still accruing after its 5★ is claimed) skews the graduating population toward early-finishing, atypical-pity-state trials. Measured up to ~8 percentage points in adversarial deep-target-4★-compounding cases — accepted as a known architectural limitation (Part IV), not fixed.
+> **Where the documented time-marginalization residual comes from.** This normalization step is exact for the arrival-time distribution itself, but it applies *one averaged* substate distribution uniformly regardless of *when* a given trial actually graduated. That's fine when nothing extends a phase past its natural pity/CR reset point — but a phase-extending mechanism (a same-phase-anchored 4★ still accruing after its 5★ is claimed) skews the graduating population toward early-finishing, atypical-pity-state trials. Measured up to ~8 percentage points in adversarial deep-target-4★-compounding cases — accepted as a known architectural limitation (Part IV), not fixed. The same averaging affects the constellation/refinement breakdown for a 4★ still on the roster across several phases of her banner — up to ~8pp in the levels above her target against Monte Carlo. (It used to reach ordinary lists too, through the trailing continuation and frozen 4★s' hand-offs; both are now computed without a hand-off — see below.)
 
 **The side-track mechanism.** III.8's $\text{blockingPhase}(g) > \text{natalPhase}(g)$ case — a non-blocking 4★ riding through earlier phases before its own gating phase — needs its own bridging, because no single phase's `localPrefixDone` already accounts for it. The engine maintains **two parallel density streams** alongside the main arrival density, from the goal's natal phase through to its blocking phase:
 
@@ -453,7 +456,7 @@ $$
 \text{resolved}[n] = \text{withinNatalContribution}[n] + \text{convolve}(\text{gPendingDensity},\ \text{activeLevel}+\text{graduatedLevel})[n] \tag{20}
 $$
 
-Using `blockingPrefixDone` here instead — which requires the *whole* blocking condition, e.g. the phase's own native 5★ too — was exactly the twentieth reported bug: a side-tracked 4★'s own odds came out wrongly identical to "4★ AND everything else the blocking phase needs." `exactEngine.ts:687-699`. This construction is exact for one simultaneously-active side track; a second overlapping one falls back to a documented, more conservative marginal-subtraction approximation, guarded by a monotonicity clamp (below).
+Using `blockingPrefixDone` here instead — which requires the *whole* blocking condition, e.g. the phase's own native 5★ too — was exactly the twentieth reported bug: a side-tracked 4★'s own odds came out wrongly identical to "4★ AND everything else the blocking phase needs." `exactEngine.ts · goalAloneDoneCumulative`. This construction is exact for one simultaneously-active side track; a second overlapping one falls back to a documented, more conservative marginal-subtraction approximation, guarded by a monotonicity clamp (below).
 
 **The character-window mechanism: carrying a FIFO code across a detour.** III.8's revised (14) means Odette's own phase can now legitimately run past Odette's own claim — held open by a same-window 4★ still short of target. If Odette and Miko (her other anchor) are explicitly linked but split into separate phases by an interleaved detour, an extra featured win landing during that hold-up needs somewhere to go: it should roll over onto Miko's still-open slot, not vanish as "this phase hasn't been reached yet." Doing that exactly means the phase-local FIFO code itself — not just banner substate and the persistent vector — has to survive the handoff across the detour, something §III.9's slices never needed before (the FIFO always reset to 0 on phase entry).
 
@@ -465,11 +468,11 @@ $$
 
 `exitSubstateDist`/`startDist` keys are **always** this 3-part form now (previously 2-part, phase code implicitly reset to 0) — costing nothing for an ordinary phase, since its own native 5★s always block it, pinning `phaseCode` to one fixed value at the point of graduation regardless of whether the encoding carries a slot for it. What changes is purely which of two things `exactEngine.ts` does on a same-banner reoccurrence: for an ordinary phase, decode out just `(bannerCode, persistentCode)` and re-seed `phaseCode` at 0 (the standing behavior — a later phase's 5★ is normally a genuinely separate win); for the *second* phase of a character-window pair, preserve the decoded `phaseCode` unchanged, letting the earlier phase's mid-detour progress carry straight through.
 
-**In-transit graduated mass, and the trailing continuation phase.** A 4★'s breakdown must keep reporting an already-obtained copy even while focus has moved to a different banner mid-chain — otherwise it would vanish from the chart for the whole intervening stretch. For a non-last-usage phase, its graduation-time density is convolved forward and held as "in transit" until the very next (intervening) phase resolves it against that phase's own *survival* function (1 − its completion CDF): the copy still counts for as long as the intervening detour hasn't yet finished.
+**In-transit graduated mass, and the trailing continuation.** A 4★'s breakdown must keep reporting an already-obtained copy even while focus has moved to a different banner mid-chain — otherwise it would vanish from the chart for the whole intervening stretch. For a non-last-usage phase, its graduation-time density is convolved forward and held as "in transit" until the banner's own next phase starts. The detour can be more than one phase long (two unlinked weapon goals are two consecutive weapon phases), so the gap's duration density is the convolution of every intervening phase's completion density, and the held copies count against that whole gap's *survival* function (1 − its CDF): a copy still counts for as long as the detour hasn't finished.
 
-Once the banner's *literal last* phase graduates with budget remaining, a real player keeps pulling on that same banner rather than stopping outright. A synthetic **trailing continuation phase** ("Phase C") — empty `.goals`, an unconditionally-open 4★ pool, and a single unreachable sentinel as its blocking condition so it can never itself graduate — runs for exactly this reason, letting an already-attached 4★ keep accruing bonus copies past its own target. Its own local horizon is capped at **400 pulls** past entry (`MAX_CONTINUATION_HORIZON_PULLS`), padded forward by repeating the last computed value — a real, measured, user-approved plateau rather than an unbounded-cost computation, since this phase shape never tapers off the way an ordinary graduating phase's active-slice set does.
+Once the *literal last* phase graduates with budget remaining, a real player keeps pulling on that same banner rather than stopping outright. So that phase's own DP runs a **trailing continuation**: mass that graduates moves into continuation slices that keep pulling, with the last phase's 4★ roster as the pool, letting a 4★ on that roster keep accruing bonus copies past her own target. Running it inside the same DP — rather than as a separate phase seeded from the normalized exit distribution, as an earlier version did — keeps each graduate's copies tied to *when* it graduated; the averaged version was 5–10pp off in the levels above a target. A 4★ whose window closed earlier isn't on this roster, so she stays frozen — and her breakdown is taken straight from her last open phase's graduated mass rather than through later phases' hand-offs, for the same reason. Continuation mass stops pulling after local pull 400 of the last phase (`MAX_CONTINUATION_HORIZON_PULLS`) — a small, user-approved plateau that bounds the cost, since continuation slices never graduate out the way an ordinary phase's mass does.
 
-**Monotonicity clamp.** A forward pass at the very end enforces `series[k] ≤ series[k−1]` pointwise — prefix $k$ is a strictly harder requirement than prefix $k-1$, so it can never show a higher probability. This is proven exact for a non-blocking goal's own resolved position, but only a conservative *upper bound* for later positions in the rare two-simultaneous-non-blocking-goals fallback case, where the true joint distribution between the two goals' completions isn't tracked directly. `exactEngine.ts:959-962`.
+**Monotonicity clamp.** A forward pass at the very end enforces `series[k] ≤ series[k−1]` pointwise — prefix $k$ is a strictly harder requirement than prefix $k-1$, so it can never show a higher probability. This is proven exact for a non-blocking goal's own resolved position, but only a conservative *upper bound* for later positions in the rare two-simultaneous-non-blocking-goals fallback case, where the true joint distribution between the two goals' completions isn't tracked directly. `exactEngine.ts · monotonicity clamp`.
 
 ---
 
@@ -477,9 +480,9 @@ Once the banner's *literal last* phase graduates with budget remaining, a real p
 
 Deliberate, measured tradeoffs — not oversights. Each was investigated, quantified, and accepted by explicit decision rather than silently shipped. Every one below is small enough to be invisible in ordinary use, and only shows up in specific, named configurations.
 
-> **crCounter / persistent-vector time-marginalization.** Derived above (III.10) — up to ~8 percentage points in adversarial deep-target-4★-compounding cases (a goal list chasing a high constellation on a 4★ that keeps riding through several phases of the same banner). A real fix means re-running a downstream phase separately per arrival-time/state bucket instead of from one merged distribution — a substantial architectural change, deliberately not attempted.
+> **crCounter / persistent-vector time-marginalization.** Derived above (III.10) — up to ~8 percentage points in adversarial deep-target-4★-compounding cases (a goal list chasing a high constellation on a 4★ that keeps riding through several phases of the same banner). In the constellation/refinement breakdown it reached ordinary lists too (5–10pp above a 4★'s target) until the trailing continuation moved inside the last phase's DP and frozen 4★s stopped going through hand-offs (2026-09-24); it now remains only for a 4★ still on the roster across several phases of her banner (up to ~8pp above target, measured against Monte Carlo). A real fix means re-running a downstream phase separately per arrival-time/state bucket instead of from one merged distribution — a substantial architectural change, deliberately not attempted.
 
-> **Pull-budget-decrease slicing residual.** `sliceResult.ts`'s cache-and-slice (truncating a cached larger-budget result instead of a fresh recompute, so lowering your pull budget in the UI feels instant) is exact only when no banner is reused across phases in a way that changes the implicit "graduated within N pulls" conditioning — reachable even by a single-phase goal list with a 4★, via the trailing continuation phase above. Measured worst case ≈0.0007 percentage points — about three orders of magnitude below display precision. Accepted universally.
+> **Pull-budget-decrease slicing residual.** `sliceResult.ts`'s cache-and-slice (truncating a cached larger-budget result instead of a fresh recompute, so lowering your pull budget in the UI feels instant) is exact only when no banner is reused across phases in a way that changes the implicit "graduated within N pulls" conditioning — reachable whenever a banner is reused across phases. Measured worst case ≈0.0007 percentage points — about three orders of magnitude below display precision. Accepted universally.
 
 > **Pull-budget increases are a full recompute, not a resume.** A "naive resume" design (extend each phase's own DP state, never retroactively refresh a downstream phase's already-fixed `startDist`) was directly measured at a 10–38 percentage point residual in an adversarial case — 1,000–50,000× larger than the slicing residual above, since a chain of same-banner phases compounds each hop's own conditioning error into the next. Abandoned after a full plan-mode design pass and direct measurement — raising your pull budget always triggers a fresh, fully exact recompute instead.
 

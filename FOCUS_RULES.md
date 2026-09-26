@@ -170,7 +170,7 @@ tested explicitly, not just asserted in prose.
 | Append a new goal at lower priority | No effect on its own completion *series* (exact equality, not just monotonic)¹ | N/A — it IS the later goal |
 | Increase pull budget | Every probability is non-decreasing | Same |
 
-¹ This exact-equality guarantee covers the appended-to goal's own completion series only. A 4★'s full constellation/refinement *breakdown* above its own target level can still change (shrink, never grow) — whether a banner keeps accruing bonus copies past its own target depends on whether it owns the literal last phase of the whole goal list (the trailing-continuation-phase mechanism), which appending a goal on a different banner can change. Deliberate, not a bug — see `invariants.test.ts`'s "prefix independence" test comment.
+¹ This exact-equality guarantee covers the appended-to goal's own completion series only. A 4★'s full constellation/refinement *breakdown* above its own target level can still change (shrink, never grow) — whether a banner keeps accruing bonus copies past its own target depends on whether it owns the literal last phase of the whole goal list and the 4★ is on that phase's roster (the trailing-continuation-phase mechanism), which appending a goal on a different banner can change. Deliberate, not a bug — see `invariants.test.ts`'s "prefix independence" test comment.
 
 Every row here is one of the invariant tests, not just a claim — see the next section.
 
